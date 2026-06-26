@@ -27,6 +27,13 @@ public sealed class CraftQueueExecutor : IDisposable
     private DateTime _phaseStarted;
     private const double PhaseTimeout = 12.0;
 
+    // Running uses a no-progress watchdog instead of the flat phase timeout — a real
+    // synthesis (and especially a batch of them) legitimately takes minutes. The watchdog
+    // resets every time the craft executor advances, so it only fires on a genuine stall.
+    private DateTime _runningWatchdog;
+    private string   _lastExecutorStatus = "";
+    private const double RunningStallTimeout = 30.0;
+
     public CraftQueueExecutor() { Service.Framework.Update += Tick; }
 
     public void Start(List<CraftQueueEntry> entries)
@@ -50,7 +57,10 @@ public sealed class CraftQueueExecutor : IDisposable
         if (CurrentState is State.Idle or State.Done or State.Error) return;
         if (_queue == null) return;
 
-        if ((DateTime.Now - _phaseStarted).TotalSeconds > PhaseTimeout)
+        // Flat timeout only for the quick setup phases. Running is bounded by its own
+        // no-progress watchdog below, since synthesis legitimately takes minutes.
+        if (CurrentState is State.SwitchingJob or State.OpeningRecipe
+            && (DateTime.Now - _phaseStarted).TotalSeconds > PhaseTimeout)
         {
             Fail($"Timed out in {CurrentState}");
             return;
@@ -79,7 +89,9 @@ public sealed class CraftQueueExecutor : IDisposable
 
             case State.Running:
             {
-                var ex = Plugin.CraftExecutor.CurrentState;
+                var ex     = Plugin.CraftExecutor.CurrentState;
+                var status = Plugin.CraftExecutor.StatusText;
+
                 if (ex == CraftExecutor.State.Done)
                 {
                     _queue[CurrentIndex].QuantityCrafted = _queue[CurrentIndex].QuantityToCraft;
@@ -95,11 +107,23 @@ public sealed class CraftQueueExecutor : IDisposable
                     {
                         BeginEntry(next);
                     }
+                    break;
                 }
-                else if (ex == CraftExecutor.State.Idle && (DateTime.Now - _phaseStarted).TotalSeconds > 8.0)
+
+                // Any change in the executor's status = progress; reset the watchdog and
+                // surface the live step in our own status text.
+                if (status != _lastExecutorStatus)
                 {
-                    Fail("CraftExecutor stopped unexpectedly — did synthesis close?");
+                    _lastExecutorStatus = status;
+                    _runningWatchdog    = DateTime.Now;
+                    StatusText = $"[{CurrentIndex + 1}/{_queue.Count}] {status}";
+                    OnChanged?.Invoke();
                 }
+
+                if (ex == CraftExecutor.State.Idle && (DateTime.Now - _runningWatchdog).TotalSeconds > 8.0)
+                    Fail("CraftExecutor stopped unexpectedly — did synthesis close?");
+                else if ((DateTime.Now - _runningWatchdog).TotalSeconds > RunningStallTimeout)
+                    Fail($"No crafting progress for {RunningStallTimeout:0}s — is the synthesis window open?");
                 break;
             }
         }
@@ -141,6 +165,8 @@ public sealed class CraftQueueExecutor : IDisposable
     {
         var entry = _queue![CurrentIndex];
         Plugin.CraftExecutor.Start(entry.QuantityToCraft, entry.RecipeId);
+        _lastExecutorStatus = "";
+        _runningWatchdog    = DateTime.Now;
         SetState(State.Running, $"Crafting {entry.Name} ({entry.QuantityToCraft}×)...");
     }
 
