@@ -8,7 +8,9 @@ using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using CSActionType = FFXIVClientStructs.FFXIV.Client.Game.ActionType;
+using CAction = Craftimizer.Simulator.Actions.ActionType;
 
 namespace GilMaster.Core;
 
@@ -67,10 +69,12 @@ public sealed class CraftExecutor : IDisposable
     private Dictionary<uint, uint>? idCache;
     private int cachedJobId = -1;
 
-    // Rotation plan produced by RotationPlanner before each craft
+    // Rotation plan produced by Craftimizer's solver before each craft
     private uint currentRecipeId;
-    private CraftSkill[]? plannedRotation;
+    private CAction[]? plannedRotation;
     private int planStep;
+    // Background solver task — launched on step 1, polled each tick until complete
+    private Task<List<CAction>>? _planTask;
 
     public State CurrentState { get; private set; } = State.Idle;
     public string StatusText { get; private set; } = "Idle";
@@ -91,6 +95,7 @@ public sealed class CraftExecutor : IDisposable
         lastLoggedStep   = uint.MaxValue;
         lastNotUsableStep = uint.MaxValue;
         loggedUnreadable = false;
+        _planTask        = null;
         CurrentState     = State.WaitingForSynth;
         StatusText       = $"Open crafting window and start synth (×{quantity})...";
         Service.Log.Information($"[GilMaster] Auto-craft armed for {quantity} craft(s), recipeId={recipeId}.");
@@ -105,6 +110,7 @@ public sealed class CraftExecutor : IDisposable
         InSynthesis     = false;
         plannedRotation = null;
         planStep        = 0;
+        _planTask       = null;
         OnChanged?.Invoke();
     }
 
@@ -137,6 +143,7 @@ public sealed class CraftExecutor : IDisposable
                     waitingSince    = DateTime.MinValue;
                     plannedRotation = null;
                     planStep        = 0;
+                    _planTask       = null;
                     CraftStarter.synthNodesDumped = false;
                 }
                 OnChanged?.Invoke();
@@ -178,6 +185,7 @@ public sealed class CraftExecutor : IDisposable
                     waitingSince    = DateTime.MinValue;
                     plannedRotation = null;
                     planStep        = 0;
+                    _planTask       = null;
                     CraftStarter.synthNodesDumped = false;
                 }
                 lastLoggedStep    = uint.MaxValue;
@@ -203,14 +211,35 @@ public sealed class CraftExecutor : IDisposable
             waitingSince = DateTime.MinValue;
         }
 
-        // Plan on step 1 of every craft. If we don't have a recipe ID (manual
-        // crafting, not started via the plugin), auto-detect from the live synth stats.
-        if (state.StepCount == 1 && plannedRotation == null)
+        // Poll MCTS background task — plan arrives ~2s after craft step 1,
+        // well before the first action fires at StepDelay=3.5s.
+        if (_planTask is { IsCompleted: true })
+        {
+            var plan  = _planTask.Status == TaskStatus.RanToCompletion ? _planTask.Result : null;
+            _planTask = null;
+            if (plan?.Count > 0)
+            {
+                plannedRotation = [.. plan];
+                planStep        = 0;
+                Service.Log.Information(
+                    $"[GilMaster] Craftimizer plan ready ({plannedRotation.Length} steps): " +
+                    string.Join(" → ", plannedRotation.Select(s => s.ToString())));
+            }
+            else
+            {
+                Service.Log.Warning("[GilMaster] Solver returned no plan — using greedy fallback.");
+            }
+            OnChanged?.Invoke();
+        }
+
+        // Launch the solver on step 1. If we don't have a recipe ID (manual crafting),
+        // auto-detect it first. Greedy fallback handles any steps before the plan lands.
+        if (state.StepCount == 1 && plannedRotation == null && _planTask == null)
         {
             if (currentRecipeId == 0)
                 currentRecipeId = DetectRecipeId(state);
             if (currentRecipeId != 0)
-                BuildPlan();
+                StartPlanAsync();
         }
 
         var buffs  = ReadBuffs();
@@ -280,22 +309,19 @@ public sealed class CraftExecutor : IDisposable
         // Follow planned rotation
         if (plannedRotation != null && planStep < plannedRotation.Length)
         {
-            var skill = plannedRotation[planStep];
-            var def   = SkillToActionDef(skill);
-            if (def != null)
+            var action = plannedRotation[planStep];
+            var def    = ActionTypeToDef(action);
+            // Check the action is usable right now (might not be on first frame)
+            var rid    = ResolveId(def.BaseId, def.IsCraftAction);
+            var at     = def.IsCraftAction ? CSActionType.CraftAction : CSActionType.Action;
+            var status = ActionManager.Instance()->GetActionStatus(at, rid);
+            if (status == 0 || status == 571 /* GCD */)
             {
-                // Check the action is usable right now (might not be on first frame)
-                var rid = ResolveId(def.Value.BaseId, def.Value.IsCraftAction);
-                var at  = def.Value.IsCraftAction ? CSActionType.CraftAction : CSActionType.Action;
-                if (ActionManager.Instance()->GetActionStatus(at, rid) == 0 ||
-                    ActionManager.Instance()->GetActionStatus(at, rid) == 571 /* GCD */)
-                {
-                    isOverride = false;
-                    return def;
-                }
+                isOverride = false;
+                return def;
             }
             // Plan step unusable — skip it
-            Service.Log.Warning($"[GilMaster] plan[{planStep}] {skill} not usable, skipping");
+            Service.Log.Warning($"[GilMaster] plan[{planStep}] {action} not usable (status {status}), skipping");
             planStep++;
         }
 
@@ -329,33 +355,33 @@ public sealed class CraftExecutor : IDisposable
 
     // ── Planning ─────────────────────────────────────────────────────────────
 
-    private unsafe void BuildPlan()
+    // Read game state on the Framework thread (Lumina sheets + player attributes),
+    // then hand the solve off to a background Task. The solver posts its result back
+    // via _planTask, polled each tick. StepDelay = 3.5 s and the greedy fallback covers
+    // any early steps, so a slightly long solve never stalls the craft.
+    private unsafe void StartPlanAsync()
     {
-        var stats  = ReadCrafterStats();
+        // NQ uses the fast greedy CarefulSynthesis loop — no need to solve for quality.
+        if (!Plugin.Config.PreferHq) return;
+
+        var stats = ReadCrafterStats();
         if (stats == null) return;
-        var recipe = ReadRecipeStats(currentRecipeId);
-        if (recipe == null) return;
+        var (craftsmanship, control, cp, level) = stats.Value;
 
-        var preferHq = Plugin.Config.PreferHq;
-        var learned  = GetLearnedSkills(stats.Value);
-        var plan     = RotationPlanner.Plan(stats.Value, recipe.Value, learned, preferHq);
-
-        if (plan == null || plan.Count == 0)
+        var input = CraftimizerBridge.BuildInput(craftsmanship, control, cp, level, currentRecipeId);
+        if (input == null)
         {
-            Service.Log.Warning(preferHq
-                ? "[GilMaster] Planner found no HQ rotation — using greedy fallback."
-                : "[GilMaster] NQ mode — skipping planner, using CarefulSynthesis loop.");
+            Service.Log.Warning("[GilMaster] Could not build solver input — greedy fallback.");
             return;
         }
 
-        plannedRotation = [.. plan];
-        planStep        = 0;
+        _planTask = Task.Run(() => CraftimizerBridge.Solve(input));
         Service.Log.Information(
-            $"[GilMaster] {(preferHq ? "HQ" : "NQ")} plan ({plannedRotation.Length} steps): " +
-            string.Join(" → ", plannedRotation.Select(s => s.ToString())));
+            $"[GilMaster] Craftimizer solve started for recipe {currentRecipeId} " +
+            $"(cms={craftsmanship} ctrl={control} cp={cp} lv={level})");
     }
 
-    private static unsafe CrafterStats? ReadCrafterStats()
+    private static unsafe (int Craftsmanship, int Control, int CP, int Level)? ReadCrafterStats()
     {
         var player = Service.Objects.LocalPlayer;
         if (player == null) return null;
@@ -367,7 +393,7 @@ public sealed class CraftExecutor : IDisposable
             var craftsmanship = (int)ui->PlayerState.Attributes[70];
             var control       = (int)ui->PlayerState.Attributes[71];
             if (craftsmanship <= 0 || control <= 0) return null;
-            return new CrafterStats(craftsmanship, control, (int)player.MaxCp, player.Level);
+            return (craftsmanship, control, (int)player.MaxCp, player.Level);
         }
         catch (Exception ex)
         {
@@ -419,95 +445,14 @@ public sealed class CraftExecutor : IDisposable
         return 0;
     }
 
-    private static RecipeStats? ReadRecipeStats(uint recipeId)
+    // Map a Craftimizer solver ActionType to GilMaster's executable action definition.
+    // The base game action id comes straight from Craftimizer's action metadata; it
+    // matches the same base ids GilMaster uses, and ResolveId turns craft actions into
+    // their per-job game id.
+    private static ActionDef ActionTypeToDef(CAction action)
     {
-        if (recipeId == 0) return null;
-        try
-        {
-            var sheet = Service.DataManager.GetExcelSheet<Recipe>();
-            var opt   = sheet.GetRowOrDefault(recipeId);
-            if (opt is null) return null;
-            var rec   = opt.Value;
-            var lvl   = rec.RecipeLevelTable.Value;
-
-            var maxProg = (int)(lvl.Difficulty  * rec.DifficultyFactor  / 100u);
-            var maxQual = (int)(lvl.Quality      * rec.QualityFactor     / 100u);
-            var maxDur  = (int)(lvl.Durability   * rec.DurabilityFactor  / 100u);
-            var pDiv    = (int)lvl.ProgressDivider;
-            var qDiv    = (int)lvl.QualityDivider;
-            var pMod    = lvl.ProgressModifier > 0 ? (int)lvl.ProgressModifier : 100;
-            var qMod    = lvl.QualityModifier  > 0 ? (int)lvl.QualityModifier  : 100;
-
-            if (maxProg <= 0 || maxDur <= 0 || pDiv <= 0) return null;
-            return new RecipeStats(maxProg, maxQual, maxDur, pDiv, qDiv, pMod, qMod);
-        }
-        catch (Exception ex)
-        {
-            Service.Log.Warning(ex, "[GilMaster] ReadRecipeStats failed");
-            return null;
-        }
-    }
-
-    private unsafe HashSet<CraftSkill> GetLearnedSkills(CrafterStats stats)
-    {
-        var learned = new HashSet<CraftSkill>();
-        if (idCache == null) ResolveId(Act.BasicSynthesis, true); // force cache build
-
-        foreach (var skill in CraftSim.AllSkills)
-        {
-            var def = SkillToActionDef(skill);
-            if (def == null) continue;
-
-            uint status;
-            if (def.Value.IsCraftAction)
-            {
-                var rid = ResolveId(def.Value.BaseId, true);
-                // If resolution failed (returned the synthetic base ID), skip — not available for this job
-                if (rid == def.Value.BaseId && def.Value.BaseId >= 100000) continue;
-                status = ActionManager.Instance()->GetActionStatus(CSActionType.CraftAction, rid);
-            }
-            else
-            {
-                status = ActionManager.Instance()->GetActionStatus(CSActionType.Action, def.Value.BaseId);
-            }
-            // 573 = not learned, 579 = wrong class — exclude only those
-            if (status != 573 && status != 579)
-                learned.Add(skill);
-        }
-
-        // Always include the absolute basics
-        learned.Add(CraftSkill.BasicSynthesis);
-        learned.Add(CraftSkill.BasicTouch);
-        return learned;
-    }
-
-    private static ActionDef? SkillToActionDef(CraftSkill skill)
-    {
-        return skill switch
-        {
-            CraftSkill.BasicSynthesis    => Def(Act.BasicSynthesis,    true,  "Basic Synthesis"),
-            CraftSkill.CarefulSynthesis  => Def(Act.CarefulSynthesis,  true,  "Careful Synthesis"),
-            CraftSkill.Groundwork        => Def(Act.Groundwork,        true,  "Groundwork"),
-            CraftSkill.DelicateSynthesis => Def(Act.DelicateSynthesis, true,  "Delicate Synthesis"),
-            CraftSkill.MuscleMemory      => Def(Act.MuscleMemory,      true,  "Muscle Memory"),
-            CraftSkill.Reflect           => Def(Act.Reflect,           true,  "Reflect"),
-            CraftSkill.BasicTouch        => Def(Act.BasicTouch,        true,  "Basic Touch"),
-            CraftSkill.StandardTouch     => Def(Act.StandardTouch,     true,  "Standard Touch"),
-            CraftSkill.AdvancedTouch     => Def(Act.AdvancedTouch,     true,  "Advanced Touch"),
-            CraftSkill.PreparatoryTouch  => Def(Act.PreparatoryTouch,  true,  "Preparatory Touch"),
-            CraftSkill.PrudentTouch      => Def(Act.PrudentTouch,      true,  "Prudent Touch"),
-            CraftSkill.ByregotsBlessing  => Def(Act.ByregotsBlessing,  true,  "Byregot's Blessing"),
-            CraftSkill.TrainedFinesse    => Def(Act.TrainedFinesse,     true,  "Trained Finesse"),
-            CraftSkill.Veneration        => Def(Act.Veneration,        false, "Veneration"),
-            CraftSkill.Innovation        => Def(Act.Innovation,        false, "Innovation"),
-            CraftSkill.WasteNot          => Def(Act.WasteNot,          false, "Waste Not"),
-            CraftSkill.WasteNot2         => Def(Act.WasteNot2,         false, "Waste Not II"),
-            CraftSkill.GreatStrides      => Def(Act.GreatStrides,      false, "Great Strides"),
-            CraftSkill.Manipulation      => Def(Act.Manipulation,      false, "Manipulation"),
-            CraftSkill.MastersMend       => Def(Act.MastersMend,       true,  "Master's Mend"),
-            CraftSkill.Observe           => Def(Act.Observe,           true,  "Observe"),
-            _ => null,
-        };
+        var (baseId, isCraft, label) = CraftimizerBridge.ToExecution(action);
+        return new ActionDef(baseId, isCraft, label);
     }
 
     // ── Buff reading ─────────────────────────────────────────────────────────
@@ -679,9 +624,10 @@ public sealed class CraftExecutor : IDisposable
             plannedRotation = null;
             planStep        = 0;
         }
-        // r == 0 means the skill doesn't exist for this job → return baseId as fallback
-        // (CanUseCraft will detect baseId >= 100000 and return false)
-        return idCache.TryGetValue(baseId, out var r) && r != 0 ? r : baseId;
+        if (idCache.TryGetValue(baseId, out var r) && r != 0) return r;
+        // Not in the name-based cache (e.g. a solver action GilMaster has no constant
+        // for) — resolve generically via the CraftAction sheet for this job.
+        return CraftimizerBridge.ResolveCraftId(baseId, jobId);
     }
 
     private static readonly Dictionary<uint, string> BaseIdNames = new()

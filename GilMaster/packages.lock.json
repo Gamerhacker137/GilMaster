@@ -19,6 +19,35 @@
         "requested": "[8.6.5, )",
         "resolved": "8.6.5",
         "contentHash": "t+sUVrIwvo7UmsgHGgOG9F0GDZSRIm47u2ylH17Gvcv1q5hNEwgD5GoBlFyc0kh/pebmPyrAgvGsR/65ZBaXlg=="
+      },
+      "DotNext": {
+        "type": "Transitive",
+        "resolved": "6.1.0",
+        "contentHash": "oUvq/a1Fydh1dC2QtGp+opiG9XjzJNRctigtC60+PlKiqdVr3TOgkBIYy/U/Q3PfzmLudpsI2i1OdVSho9wbSQ==",
+        "dependencies": {
+          "System.IO.Hashing": "10.0.3"
+        }
+      },
+      "Raphael.Net": {
+        "type": "Transitive",
+        "resolved": "5.0.0",
+        "contentHash": "NSD9eUqKXLMKAjgMK6Ou0UxndYdmKV2S3Q52ndjxUIoO44OYwuQ72HOVqZUyTOxgBJfLPoPjGX2UyW71msM1uw=="
+      },
+      "System.IO.Hashing": {
+        "type": "Transitive",
+        "resolved": "10.0.3",
+        "contentHash": "La6ICwsdTKhVX+LKN+pvFjQRR3LhLwq3uKdi2knjLzRyPYBSydF4cjXidYxIiTcDD6XVYdsBWQEI8ZxiZ/OdIg=="
+      },
+      "craftimizer.simulator": {
+        "type": "Project"
+      },
+      "craftimizer.solver": {
+        "type": "Project",
+        "dependencies": {
+          "Craftimizer.Simulator": "[1.0.0, )",
+          "DotNext": "[6.1.0, )",
+          "Raphael.Net": "[5.0.0, )"
+        }
       }
     }
   }
