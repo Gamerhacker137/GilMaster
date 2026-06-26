@@ -203,9 +203,15 @@ public sealed class CraftExecutor : IDisposable
             waitingSince = DateTime.MinValue;
         }
 
-        // Plan on step 1 (once per craft, only when we have a recipe ID)
-        if (state.StepCount == 1 && plannedRotation == null && currentRecipeId != 0)
-            BuildPlan();
+        // Plan on step 1 of every craft. If we don't have a recipe ID (manual
+        // crafting, not started via the plugin), auto-detect from the live synth stats.
+        if (state.StepCount == 1 && plannedRotation == null)
+        {
+            if (currentRecipeId == 0)
+                currentRecipeId = DetectRecipeId(state);
+            if (currentRecipeId != 0)
+                BuildPlan();
+        }
 
         var buffs  = ReadBuffs();
         bool isOverride;
@@ -368,6 +374,49 @@ public sealed class CraftExecutor : IDisposable
             Service.Log.Warning(ex, "[GilMaster] ReadCrafterStats failed");
             return null;
         }
+    }
+
+    // Scan recipes for the current job to find one whose computed max-progress,
+    // max-quality, and max-durability match what the synth addon is showing.
+    // Called once per craft when currentRecipeId is unknown (manual crafting).
+    private static uint DetectRecipeId(SynthState state)
+    {
+        try
+        {
+            var player = Service.Objects.LocalPlayer;
+            if (player == null) return 0;
+            var jobId       = (int)player.ClassJob.RowId;
+            var craftTypeId = jobId - 8; // 0=CRP…7=CUL
+            if (craftTypeId < 0 || craftTypeId > 7) return 0;
+
+            var sheet = Service.DataManager.GetExcelSheet<Recipe>();
+            foreach (var recipe in sheet)
+            {
+                if ((int)recipe.CraftType.RowId != craftTypeId) continue;
+                var lvl     = recipe.RecipeLevelTable.Value;
+                var maxProg = (int)(lvl.Difficulty * recipe.DifficultyFactor / 100u);
+                var maxQual = (int)(lvl.Quality    * recipe.QualityFactor    / 100u);
+                var maxDur  = (int)(lvl.Durability * recipe.DurabilityFactor / 100u);
+                if (maxProg == (int)state.MaxProgress &&
+                    maxQual == (int)state.MaxQuality  &&
+                    maxDur  == (int)state.MaxDurability)
+                {
+                    Service.Log.Information(
+                        $"[GilMaster] Auto-detected recipe {recipe.RowId} " +
+                        $"({recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? "?"}) " +
+                        $"from synth stats prog={maxProg} qual={maxQual} dur={maxDur}");
+                    return recipe.RowId;
+                }
+            }
+            Service.Log.Warning(
+                $"[GilMaster] Could not auto-detect recipe (prog={state.MaxProgress} " +
+                $"qual={state.MaxQuality} dur={state.MaxDurability} job={jobId}) — greedy fallback.");
+        }
+        catch (Exception ex)
+        {
+            Service.Log.Warning(ex, "[GilMaster] DetectRecipeId failed");
+        }
+        return 0;
     }
 
     private static RecipeStats? ReadRecipeStats(uint recipeId)
@@ -620,8 +669,13 @@ public sealed class CraftExecutor : IDisposable
         }
         else if (level != cachedLevel)
         {
-            // Level up — invalidate plan so it's rebuilt with newly learned skills
+            // Level up detected — log newly available skills, then let the next
+            // craft build a fresh plan so any newly learned abilities are included.
+            Service.Log.Information(
+                $"[GilMaster] Level up: {cachedLevel} → {level}. " +
+                "Rotation will be rebuilt from scratch on next synthesis.");
             cachedLevel     = level;
+            currentRecipeId = 0; // force re-detect in case recipe stats also changed
             plannedRotation = null;
             planStep        = 0;
         }
