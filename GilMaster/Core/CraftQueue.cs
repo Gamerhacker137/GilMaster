@@ -136,26 +136,50 @@ public sealed class CraftQueue
         }
     }
 
-    // ── Live inventory count ──────────────────────────────────────────────
+    // ── Live inventory count (all containers including crystal pouch) ─────
     public static unsafe int GetItemCount(uint itemId)
     {
-        var inv = InventoryManager.Instance();
-        if (inv == null) return 0;
-        int count = 0;
-        // Check all four main inventory bags (indices 0-3)
-        for (uint bag = 0; bag <= 3; bag++)
+        try { return (int)InventoryManager.Instance()->GetInventoryItemCount(itemId); }
+        catch { return 0; }
+    }
+
+    // ── Maximum craftable quantity given current inventory ─────────────────
+    // Binary-searches using Build() so it handles shared sub-ingredients and
+    // craftable intermediates in inventory correctly.
+    public int CalcMaxCraftable(uint targetItemId)
+    {
+        _recipeIndex ??= BuildRecipeIndex();
+
+        Build(targetItemId, 1);
+        if (Missing.Count > 0) return 0;
+
+        // Double until crafting fails or we hit 9999
+        int upper = 2;
+        while (upper <= 9999)
         {
-            var container = inv->GetInventoryContainer((InventoryType)bag);
-            if (container == null) continue;
-            for (int i = 0; i < container->Size; i++)
-            {
-                var slot = container->GetInventorySlot(i);
-                if (slot == null) continue;
-                if (slot->ItemId == itemId)
-                    count += (int)slot->Quantity;
-            }
+            Build(targetItemId, upper);
+            if (Missing.Count > 0) break;
+            upper = Math.Min(upper * 2, 10000);
         }
-        return count;
+
+        if (upper > 9999)
+        {
+            Build(targetItemId, 9999);
+            return 9999;
+        }
+
+        // Binary search: lo is always craftable, hi is always not
+        int lo = upper / 2, hi = upper;
+        while (hi - lo > 1)
+        {
+            int mid = (lo + hi) / 2;
+            Build(targetItemId, mid);
+            if (Missing.Count == 0) lo = mid;
+            else hi = mid;
+        }
+
+        Build(targetItemId, lo); // restore Entries/Missing to the max-good state
+        return lo;
     }
 
     private static string GetItemName(uint itemId)

@@ -38,8 +38,20 @@ public sealed class QueueTab
         ImGui.SameLine();
         ImGui.SetNextItemWidth(70);
         ImGui.InputInt("##qqty", ref quantity, 1, 10);
-        quantity = Math.Clamp(quantity, 1, 999);
+        quantity = Math.Clamp(quantity, 1, 9999);
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Quantity to craft");
+
+        ImGui.SameLine();
+        bool canMax = selectedItemId != 0 && !isRunning;
+        if (!canMax) ImGui.BeginDisabled();
+        if (ImGui.SmallButton("Max"))
+        {
+            var max = queue.CalcMaxCraftable(selectedItemId);
+            quantity = Math.Max(1, max);
+            // CalcMaxCraftable already called Build() with the result — queue is ready
+        }
+        if (!canMax) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Calculate maximum craftable from current inventory");
 
         // Rebuild search results when text changes (3+ chars required)
         if (searchText != prevSearch)
