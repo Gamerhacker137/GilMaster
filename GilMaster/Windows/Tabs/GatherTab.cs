@@ -2,6 +2,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using GilMaster.Core;
 using GilMaster.Models;
 using System;
 using System.Collections.Generic;
@@ -144,14 +145,26 @@ public sealed class GatherTab
                 ImGui.TableNextRow();
                 ImGui.TableSetColumnIndex(0);
 
-                // Item name — orange if unspoiled
+                // Item name — orange if timed/unspoiled
                 if (node.IsUnspoiled)
                     ImGui.TextColored(new Vector4(1f, 0.6f, 0.1f, 1f), node.ItemName);
                 else
                     ImGui.Text(node.ItemName);
 
                 if (node.IsUnspoiled && ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"Unspoiled node\n{node.TimedUptimeInfo ?? "Check an uptime tracker"}");
+                    ImGui.SetTooltip(node.IsTimed
+                        ? $"Timed node\nWindows: {node.TimedUptimeInfo}\n{NodeUptime.LiveLabel(node.UptimeBitfield)}"
+                        : "Unspoiled node");
+
+                // Live uptime — green when up now, yellow with the countdown when not.
+                if (node.IsTimed)
+                {
+                    var (up, _) = NodeUptime.LiveStatus(node.UptimeBitfield);
+                    ImGui.SameLine();
+                    ImGui.TextColored(
+                        up ? new Vector4(0.3f, 1f, 0.4f, 1f) : new Vector4(1f, 0.85f, 0.3f, 1f),
+                        $"[{NodeUptime.LiveLabel(node.UptimeBitfield)}]");
+                }
 
                 ImGui.TableSetColumnIndex(1);
                 ImGui.Text(node.QuantityNeeded.ToString());

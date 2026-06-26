@@ -32,7 +32,12 @@ public sealed class GatherNode
 
     public int RequiredLevel { get; init; }
     public bool IsUnspoiled { get; init; }
-    public string? TimedUptimeInfo { get; init; }  // e.g. "ET 0:00-3:00"
+    public string? TimedUptimeInfo { get; init; }  // e.g. "00:00–03:00 ET"
+
+    // 24-bit Eorzea-hour uptime mask for timed nodes (0 = always up / untimed).
+    // Used to compute live "UP now / up in Xm" status from the real clock.
+    public uint UptimeBitfield { get; init; }
+    public bool IsTimed => UptimeBitfield != 0 && UptimeBitfield != 0x00FFFFFF;
 
     public string? ClosestAetheryteName { get; init; }
 }

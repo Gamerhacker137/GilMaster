@@ -57,7 +57,12 @@ public sealed class GatheringLocator
                 var baseId    = pt.GatheringPointBase.RowId;
                 var coordRow  = exportedGPSheet.GetRowOrDefault(baseId);
                 var transient = transientSheet.GetRowOrDefault(pt.RowId);
+
                 var isUnspoiled = transient.HasValue && transient.Value.GatheringRarePopTimeTable.RowId != 0;
+                uint uptimeMask = 0;
+                if (isUnspoiled && transient!.Value.GatheringRarePopTimeTable.ValueNullable is { } rareTable)
+                    uptimeMask = NodeUptime.FromRarePopTable(rareTable);
+
                 pointInfos[pt.RowId] = new PointInfo
                 {
                     TerritoryId = pt.TerritoryType.RowId,
@@ -66,6 +71,7 @@ public sealed class GatheringLocator
                     PlaceNameId = pt.PlaceName.RowId,
                     BaseId      = baseId,
                     IsUnspoiled = isUnspoiled,
+                    UptimeMask  = uptimeMask,
                 };
             }
 
@@ -143,6 +149,9 @@ public sealed class GatheringLocator
                     var aethName = FindClosestAetheryte(info.RawX, info.RawZ, sizeFactor,
                         info.TerritoryId, aethByTerritory);
 
+                    var isTimed = info.IsUnspoiled && !NodeUptime.IsAlwaysUp(info.UptimeMask);
+                    var windows = isTimed ? NodeUptime.Windows(info.UptimeMask) : null;
+
                     var node = new GatherNode
                     {
                         ItemId               = itemId,
@@ -158,7 +167,8 @@ public sealed class GatheringLocator
                         DisplayY             = dispY,
                         RequiredLevel        = (int)gi.GatheringItemLevel.Value.GatheringItemLevel,
                         IsUnspoiled          = info.IsUnspoiled,
-                        TimedUptimeInfo      = info.IsUnspoiled ? "Unspoiled node — check an uptime tracker for exact ET window" : null,
+                        UptimeBitfield       = isTimed ? info.UptimeMask : 0,
+                        TimedUptimeInfo      = windows,
                         ClosestAetheryteName = aethName,
                     };
 
@@ -229,5 +239,6 @@ public sealed class GatheringLocator
         public uint  PlaceNameId { get; init; }
         public uint  BaseId      { get; init; }
         public bool  IsUnspoiled { get; init; }
+        public uint  UptimeMask  { get; init; }
     }
 }
