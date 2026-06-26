@@ -12,6 +12,7 @@ public sealed class MainWindow : Window, IDisposable
     private readonly FindTab findTab = new();
     private readonly GatherTab gatherTab = new();
     private readonly CraftTab craftTab = new();
+    private readonly QueueTab queueTab = new();
     private readonly LevelTab levelTab = new();
 
     // Signals to the tab bar that we want to switch to Gather next frame
@@ -95,6 +96,12 @@ public sealed class MainWindow : Window, IDisposable
             if (ImGui.BeginTabItem("Craft"))
             {
                 craftTab.Draw();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Queue"))
+            {
+                queueTab.Draw();
                 ImGui.EndTabItem();
             }
 

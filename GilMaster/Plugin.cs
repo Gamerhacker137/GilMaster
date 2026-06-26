@@ -13,8 +13,10 @@ public sealed class Plugin : IDalamudPlugin
     public static RecipeResolver RecipeResolver { get; private set; } = null!;
     public static GatheringLocator GatheringLocator { get; private set; } = null!;
     public static LevelingAdvisor LevelingAdvisor { get; private set; } = null!;
-    public static CraftExecutor CraftExecutor { get; private set; } = null!;
-    public static CraftStarter CraftStarter { get; private set; } = null!;
+    public static CraftExecutor      CraftExecutor      { get; private set; } = null!;
+    public static CraftStarter       CraftStarter       { get; private set; } = null!;
+    public static CraftQueue         CraftQueue         { get; private set; } = null!;
+    public static CraftQueueExecutor CraftQueueExecutor { get; private set; } = null!;
 
     private readonly WindowSystem windowSystem = new("GilMaster");
     private readonly MainWindow mainWindow;
@@ -33,8 +35,10 @@ public sealed class Plugin : IDalamudPlugin
 
         ProfitEngine = new ProfitEngine();
         LevelingAdvisor = new LevelingAdvisor();
-        CraftExecutor = new CraftExecutor();
-        CraftStarter = new CraftStarter();
+        CraftExecutor      = new CraftExecutor();
+        CraftStarter       = new CraftStarter();
+        CraftQueue         = new CraftQueue();
+        CraftQueueExecutor = new CraftQueueExecutor();
 
         // Load last scan from disk so the list isn't empty on startup
         ProfitEngine.TryLoadCache();
@@ -63,6 +67,7 @@ public sealed class Plugin : IDalamudPlugin
         Service.PluginInterface.UiBuilder.OpenConfigUi -= OpenMainWindow;
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
+        CraftQueueExecutor.Dispose();
         CraftExecutor.Dispose();
         CraftStarter.Dispose();
         ProfitEngine.Dispose();
