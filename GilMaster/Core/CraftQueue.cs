@@ -1,4 +1,5 @@
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
@@ -28,6 +29,9 @@ public sealed class MissingMaterial
     public int    Quantity { get; set; }
 }
 
+/// <summary>An item the player has the materials to craft right now.</summary>
+public sealed record CraftableSuggestion(uint ItemId, string Name, string JobName, int MaxQuantity);
+
 public sealed class CraftQueue
 {
     private sealed class RecipeInfo
@@ -36,6 +40,7 @@ public sealed class CraftQueue
         public int                    AmountResult { get; init; } = 1;
         public int                    JobId        { get; init; }
         public string                 JobName      { get; init; } = "";
+        public int                    RecipeLevel  { get; init; }
         public (uint ItemId, int Amt)[] Ingredients { get; init; } = [];
     }
 
@@ -137,7 +142,24 @@ public sealed class CraftQueue
     }
 
     // ── Live inventory count (all containers including crystal pouch) ─────
-    public static unsafe int GetItemCount(uint itemId)
+    // During a full-inventory scan (FindCraftableFromInventory) the same materials
+    // get queried thousands of times, so an optional memo reads each item from the
+    // game only once per scan.
+    private static Dictionary<uint, int>? _scanMemo;
+
+    public static int GetItemCount(uint itemId)
+    {
+        if (_scanMemo != null)
+        {
+            if (_scanMemo.TryGetValue(itemId, out var cached)) return cached;
+            var live = ReadItemCount(itemId);
+            _scanMemo[itemId] = live;
+            return live;
+        }
+        return ReadItemCount(itemId);
+    }
+
+    private static unsafe int ReadItemCount(uint itemId)
     {
         try { return (int)InventoryManager.Instance()->GetInventoryItemCount(itemId); }
         catch { return 0; }
@@ -182,6 +204,105 @@ public sealed class CraftQueue
         return lo;
     }
 
+    // ── "What can I make?" — scan inventory for everything craftable now ──────
+    //
+    // Walks every craftable recipe, skips ones above the player's level in that
+    // craft class, and keeps those whose full material tree is satisfied by current
+    // inventory. Uses a one-shot inventory memo so the thousands of lookups stay cheap.
+    public List<CraftableSuggestion> FindCraftableFromInventory(int maxResults = 200)
+    {
+        _recipeIndex ??= BuildRecipeIndex();
+
+        // Read each crafter class level once (jobId 8=CRP … 15=CUL).
+        var levels = new Dictionary<int, int>();
+        for (var job = 8; job <= 15; job++) levels[job] = GetCrafterLevel(job);
+
+        var results = new List<CraftableSuggestion>();
+        _scanMemo = new Dictionary<uint, int>();
+        try
+        {
+            foreach (var (itemId, ri) in _recipeIndex)
+            {
+                if (levels.GetValueOrDefault(ri.JobId, 99) < ri.RecipeLevel) continue; // can't craft yet
+                var max = MaxMakeable(itemId);
+                if (max <= 0) continue;
+                results.Add(new CraftableSuggestion(itemId, GetItemName(itemId), ri.JobName, max));
+            }
+        }
+        finally { _scanMemo = null; }
+
+        return results
+            .OrderBy(r => r.JobName, StringComparer.Ordinal)
+            .ThenBy(r => r.Name, StringComparer.Ordinal)
+            .Take(maxResults)
+            .ToList();
+    }
+
+    // Pure makeability check for `quantity` of an item from current inventory, without
+    // disturbing the public Entries/Missing state. Bails out as soon as any raw
+    // material is short. Mirrors Build()'s BFS accumulation of shared sub-ingredients.
+    private bool CanCraft(uint targetItemId, int quantity)
+    {
+        var needed   = new Dictionary<uint, int> { [targetItemId] = quantity };
+        var bfsQueue = new Queue<uint>();
+        var seen     = new HashSet<uint> { targetItemId };
+        bfsQueue.Enqueue(targetItemId);
+
+        while (bfsQueue.Count > 0)
+        {
+            var itemId      = bfsQueue.Dequeue();
+            var stillNeeded = Math.Max(0, needed.GetValueOrDefault(itemId) - GetItemCount(itemId));
+            if (stillNeeded == 0) continue;
+            if (!_recipeIndex!.TryGetValue(itemId, out var ri)) return false; // raw material short
+
+            var craftCount = (int)Math.Ceiling((double)stillNeeded / ri.AmountResult);
+            foreach (var (ingId, ingAmt) in ri.Ingredients)
+            {
+                if (ingId == 0) continue;
+                needed[ingId] = needed.GetValueOrDefault(ingId) + ingAmt * craftCount;
+                if (seen.Add(ingId)) bfsQueue.Enqueue(ingId);
+            }
+        }
+        return true;
+    }
+
+    // Max craftable from inventory via the pure CanCraft check (doesn't touch Entries).
+    private int MaxMakeable(uint targetItemId)
+    {
+        if (!CanCraft(targetItemId, 1)) return 0;
+
+        int upper = 2;
+        while (upper <= 9999 && CanCraft(targetItemId, upper))
+            upper = Math.Min(upper * 2, 10000);
+        if (upper > 9999) return 9999;
+
+        int lo = upper / 2, hi = upper;
+        while (hi - lo > 1)
+        {
+            int mid = (lo + hi) / 2;
+            if (CanCraft(targetItemId, mid)) lo = mid; else hi = mid;
+        }
+        return lo;
+    }
+
+    // Player's level in a given crafter class (jobId 8..15). Returns 99 on any failure
+    // so a read error never hides craftable items behind the level filter.
+    private static unsafe int GetCrafterLevel(int jobId)
+    {
+        try
+        {
+            var ps = PlayerState.Instance();
+            if (ps == null) return 99;
+            var opt = Service.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ClassJob>()
+                             .GetRowOrDefault((uint)jobId);
+            if (opt is not { } row) return 99;
+            int idx = row.ExpArrayIndex;
+            if (idx < 0) return 99;
+            return ps->ClassJobLevels[idx];
+        }
+        catch { return 99; }
+    }
+
     private static string GetItemName(uint itemId)
     {
         var item = Service.DataManager.GetExcelSheet<Item>().GetRowOrDefault(itemId);
@@ -222,6 +343,7 @@ public sealed class CraftQueue
                 AmountResult = recipe.AmountResult > 0 ? recipe.AmountResult : 1,
                 JobId        = jobId,
                 JobName      = jobName,
+                RecipeLevel  = recipe.RecipeLevelTable.ValueNullable?.ClassJobLevel ?? 0,
                 Ingredients  = [.. ings],
             };
         }

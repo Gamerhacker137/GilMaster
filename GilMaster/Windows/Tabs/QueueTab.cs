@@ -17,6 +17,10 @@ public sealed class QueueTab
     private string prevSearch       = string.Empty;
     private List<(uint Id, string Name)> searchResults = [];
 
+    // "What can I make?" inventory scan results
+    private List<CraftableSuggestion> makeableResults = [];
+    private bool makeableScanned;
+
     // Built once on first search — index of all craftable items
     private static Dictionary<uint, string>? craftableItemNames;
 
@@ -114,6 +118,74 @@ public sealed class QueueTab
         if (!canBuild) ImGui.EndDisabled();
 
         ImGui.Separator();
+
+        // ── "What can I make?" — scan inventory for everything craftable now ──
+        if (isRunning) ImGui.BeginDisabled();
+        if (ImGui.Button("What can I make?"))
+        {
+            makeableResults = queue.FindCraftableFromInventory();
+            makeableScanned = true;
+        }
+        if (isRunning) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Scan your inventory and list everything you have the materials to craft right now (any job, your level or below).");
+
+        if (makeableResults.Count > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.3f, 1f, 0.4f, 1f), $"{makeableResults.Count} craftable:");
+
+            if (ImGui.BeginTable("##makeable", 4,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY,
+                new Vector2(0, 180)))
+            {
+                ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Job",  ImGuiTableColumnFlags.WidthFixed, 40);
+                ImGui.TableSetupColumn("Max",  ImGuiTableColumnFlags.WidthFixed, 45);
+                ImGui.TableSetupColumn("##act", ImGuiTableColumnFlags.WidthFixed, 130);
+                ImGui.TableHeadersRow();
+
+                foreach (var s in makeableResults)
+                {
+                    ImGui.PushID((int)s.ItemId);
+                    ImGui.TableNextRow();
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(s.Name);
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextDisabled(s.JobName);
+
+                    ImGui.TableNextColumn();
+                    ImGui.TextUnformatted(s.MaxQuantity.ToString());
+
+                    ImGui.TableNextColumn();
+                    if (ImGui.SmallButton("Queue 1"))
+                    {
+                        selectedItemId   = s.ItemId;
+                        selectedItemName = s.Name;
+                        quantity         = 1;
+                        queue.Build(s.ItemId, 1);
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Max##q"))
+                    {
+                        selectedItemId   = s.ItemId;
+                        selectedItemName = s.Name;
+                        quantity         = s.MaxQuantity;
+                        queue.Build(s.ItemId, s.MaxQuantity);
+                    }
+                    ImGui.PopID();
+                }
+                ImGui.EndTable();
+            }
+            ImGui.Separator();
+        }
+        else if (makeableScanned)
+        {
+            ImGui.TextDisabled("Nothing craftable from your current inventory.");
+            ImGui.Separator();
+        }
 
         // ── Empty state ───────────────────────────────────────────────────
         if (queue.IsEmpty)
