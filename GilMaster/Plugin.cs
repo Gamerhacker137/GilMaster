@@ -1,0 +1,71 @@
+using Dalamud.Game.Command;
+using Dalamud.Interface.Windowing;
+using Dalamud.Plugin;
+using GilMaster.Core;
+using GilMaster.Windows;
+
+namespace GilMaster;
+
+public sealed class Plugin : IDalamudPlugin
+{
+    public static Configuration Config { get; private set; } = null!;
+    public static ProfitEngine ProfitEngine { get; private set; } = null!;
+    public static RecipeResolver RecipeResolver { get; private set; } = null!;
+    public static GatheringLocator GatheringLocator { get; private set; } = null!;
+    public static LevelingAdvisor LevelingAdvisor { get; private set; } = null!;
+    public static CraftExecutor CraftExecutor { get; private set; } = null!;
+    public static CraftStarter CraftStarter { get; private set; } = null!;
+
+    private readonly WindowSystem windowSystem = new("GilMaster");
+    private readonly MainWindow mainWindow;
+
+    private const string Command = "/gilmaster";
+
+    public Plugin(IDalamudPluginInterface pi)
+    {
+        Service.Initialize(pi);
+
+        Config = Service.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+
+        GatheringLocator = new GatheringLocator();
+        RecipeResolver = new RecipeResolver();
+        RecipeResolver.SetGatherables(GatheringLocator.GatherableItemIds);
+
+        ProfitEngine = new ProfitEngine();
+        LevelingAdvisor = new LevelingAdvisor();
+        CraftExecutor = new CraftExecutor();
+        CraftStarter = new CraftStarter();
+
+        // Load last scan from disk so the list isn't empty on startup
+        ProfitEngine.TryLoadCache();
+
+        mainWindow = new MainWindow();
+        windowSystem.AddWindow(mainWindow);
+
+        Service.CommandManager.AddHandler(Command, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Open GilMaster — find profitable items to gather and craft.",
+        });
+
+        Service.PluginInterface.UiBuilder.Draw += windowSystem.Draw;
+        Service.PluginInterface.UiBuilder.OpenMainUi += OpenMainWindow;
+        Service.PluginInterface.UiBuilder.OpenConfigUi += OpenMainWindow;
+    }
+
+    private void OnCommand(string command, string args) => OpenMainWindow();
+    private void OpenMainWindow() => mainWindow.IsOpen = true;
+
+    public void Dispose()
+    {
+        Service.CommandManager.RemoveHandler(Command);
+        Service.PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
+        Service.PluginInterface.UiBuilder.OpenMainUi -= OpenMainWindow;
+        Service.PluginInterface.UiBuilder.OpenConfigUi -= OpenMainWindow;
+        windowSystem.RemoveAllWindows();
+        mainWindow.Dispose();
+        CraftExecutor.Dispose();
+        CraftStarter.Dispose();
+        ProfitEngine.Dispose();
+        Config.Save();
+    }
+}
