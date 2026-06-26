@@ -18,6 +18,14 @@ public sealed class GatherTab
     private List<GatherNode>? gatherPlan;
     private RecipeIngredient[]? ingredients;
 
+    // Standalone "find any node" search (independent of the Find-tab target)
+    private string materialSearch = string.Empty;
+    private string prevMaterialSearch = string.Empty;
+    private List<(uint Id, string Name)> materialMatches = [];
+    private uint selectedMaterialId;
+    private List<GatherNode> materialNodes = [];
+    private static Dictionary<uint, string>? gatherableNames;
+
     public void SetTarget(ProfitableItem item)
     {
         targetItem = item;
@@ -102,14 +110,19 @@ public sealed class GatherTab
 
     public void Draw()
     {
+        var config = Plugin.Config;
+
+        // Standalone node finder — type any gatherable and see its best node.
+        DrawMaterialSearch();
+
         if (targetItem is null)
         {
-            ImGui.TextDisabled("Select an item in the Find tab first.");
+            ImGui.Separator();
+            ImGui.TextDisabled("Or pick an item in the Find tab to see its full crafting gather plan.");
             return;
         }
 
-        var config = Plugin.Config;
-
+        ImGui.Separator();
         ImGui.Text("Target: ");
         ImGui.SameLine();
         ImGui.TextColored(new Vector4(1, 0.85f, 0.3f, 1), targetItem.Name);
@@ -282,6 +295,152 @@ public sealed class GatherTab
             }
         }
         ImGui.Spacing();
+    }
+
+    // ── Standalone node finder ────────────────────────────────────────────────
+    private void DrawMaterialSearch()
+    {
+        ImGui.TextUnformatted("Find a node:");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(240);
+        ImGui.InputTextWithHint("##matsearch", "Search any gatherable (e.g. mythrite ore)", ref materialSearch, 64);
+
+        if (materialSearch != prevMaterialSearch)
+        {
+            prevMaterialSearch = materialSearch;
+            materialMatches.Clear();
+            if (materialSearch.Length >= 3)
+            {
+                gatherableNames ??= BuildGatherableIndex();
+                materialMatches = gatherableNames
+                    .Where(kv => kv.Value.Contains(materialSearch, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(kv => kv.Value.Length)
+                    .ThenBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
+                    .Take(15)
+                    .Select(kv => (kv.Key, kv.Value))
+                    .ToList();
+            }
+        }
+
+        if (materialMatches.Count > 0)
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(260);
+            var preview = selectedMaterialId != 0 && gatherableNames != null
+                ? gatherableNames.GetValueOrDefault(selectedMaterialId, "(select)")
+                : "(select)";
+            if (ImGui.BeginCombo("##matresults", preview))
+            {
+                foreach (var (id, name) in materialMatches)
+                    if (ImGui.Selectable(name, id == selectedMaterialId))
+                        SelectMaterial(id);
+                ImGui.EndCombo();
+            }
+        }
+        else if (materialSearch.Length is > 0 and < 3)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled("(3+ chars)");
+        }
+
+        if (selectedMaterialId == 0) return;
+
+        if (materialNodes.Count == 0)
+        {
+            ImGui.TextDisabled("No known node for that item.");
+            return;
+        }
+
+        // Best node banner + a compact table of every node, best first.
+        var best = materialNodes[0];
+        ImGui.TextColored(new Vector4(0.3f, 1f, 0.4f, 1f), "Best node:");
+        ImGui.SameLine();
+        ImGui.TextUnformatted($"{best.ZoneName} (X:{best.DisplayX:F1} Y:{best.DisplayY:F1})");
+        if (best.IsTimed)
+        {
+            ImGui.SameLine();
+            var (up, _) = NodeUptime.LiveStatus(best.UptimeBitfield);
+            ImGui.TextColored(up ? new Vector4(0.3f, 1f, 0.4f, 1f) : new Vector4(1f, 0.85f, 0.3f, 1f),
+                $"[{NodeUptime.LiveLabel(best.UptimeBitfield)}]");
+        }
+
+        if (ImGui.BeginTable("##matnodes", 5,
+            ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY,
+            new Vector2(0, 150)))
+        {
+            ImGui.TableSetupColumn("Zone",   ImGuiTableColumnFlags.WidthStretch, 3);
+            ImGui.TableSetupColumn("Lvl",    ImGuiTableColumnFlags.WidthFixed, 36);
+            ImGui.TableSetupColumn("Coords", ImGuiTableColumnFlags.WidthFixed, 78);
+            ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 90);
+            ImGui.TableSetupColumn("##act",  ImGuiTableColumnFlags.WidthFixed, 145);
+            ImGui.TableHeadersRow();
+
+            foreach (var node in materialNodes)
+            {
+                ImGui.TableNextRow();
+
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted(node.ZoneName);
+                if (node.ClosestAetheryteName != null)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled($"({node.ClosestAetheryteName})");
+                }
+
+                ImGui.TableSetColumnIndex(1);
+                ImGui.Text(node.RequiredLevel.ToString());
+
+                ImGui.TableSetColumnIndex(2);
+                ImGui.Text(node.DisplayX > 0 ? $"X:{node.DisplayX:F1} Y:{node.DisplayY:F1}" : "?");
+
+                ImGui.TableSetColumnIndex(3);
+                if (node.IsTimed)
+                {
+                    var (up, _) = NodeUptime.LiveStatus(node.UptimeBitfield);
+                    ImGui.TextColored(up ? new Vector4(0.3f, 1f, 0.4f, 1f) : new Vector4(1f, 0.85f, 0.3f, 1f),
+                        NodeUptime.LiveLabel(node.UptimeBitfield));
+                }
+                else
+                {
+                    ImGui.TextDisabled("always");
+                }
+
+                ImGui.TableSetColumnIndex(4);
+                ImGui.PushID($"mat{node.TerritoryId}_{node.RawX}_{node.RawZ}");
+                if (node.AetheryteId != 0)
+                {
+                    if (ImGui.SmallButton("TP")) AetheryteData.Teleport(node.AetheryteId);
+                    ImGui.SameLine();
+                }
+                if (ImGui.SmallButton("Map")) OpenMap(node);
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Chat")) PrintToChat(node);
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+        }
+    }
+
+    private void SelectMaterial(uint id)
+    {
+        selectedMaterialId = id;
+        materialNodes = Plugin.GatheringLocator.GetNodesForItem(id)
+            .OrderBy(n => AvailableNow(n) ? 0 : 1)
+            .ThenBy(n => AvailableNow(n) ? 0 : MinutesToUp(n))
+            .ThenBy(n => n.RequiredLevel)
+            .ToList();
+    }
+
+    // Gatherable items that actually have node data, keyed by item id → name.
+    private static Dictionary<uint, string> BuildGatherableIndex()
+    {
+        var dict = new Dictionary<uint, string>();
+        foreach (var id in Plugin.GatheringLocator.GatherableItemIds)
+        {
+            var nodes = Plugin.GatheringLocator.GetNodesForItem(id);
+            if (nodes.Count > 0) dict[id] = nodes[0].ItemName;
+        }
+        return dict;
     }
 
     private static unsafe int GetInventoryCount(uint itemId)
