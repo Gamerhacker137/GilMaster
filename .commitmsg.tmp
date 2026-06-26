@@ -1,9 +1,0 @@
-v1.0.7: hold first action for the solver so the plan starts at step 1
-
-If the solve hadn't finished by the time the first action fired (StepDelay
-3.5s), greedy executed the opener and the plan — computed assuming a fresh
-craft — then ran misaligned. Now the executor waits up to PlanGrace (12s) for
-the plan before committing the first action, and only adopts a plan that
-arrives while still at step 1; a late plan is discarded and greedy carries on.
-
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
