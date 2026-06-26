@@ -95,21 +95,22 @@ public sealed class GatheringLocator
             foreach (var terr in territorySheet)
                 if (terr.Map.RowId != 0) mapToTerritory[terr.Map.RowId] = terr.RowId;
 
-            // territory → list of (mapX, mapY, aethName)
-            var aethByTerritory = new Dictionary<uint, List<(int x, int y, string name)>>();
+            // territory → list of (mapX, mapY, aethName, aetheryteId)
+            var aethByTerritory = new Dictionary<uint, List<(int x, int y, string name, uint id)>>();
             foreach (var outerRow in mapMarkerSheet)
             {
                 if (!mapToTerritory.TryGetValue(outerRow.RowId, out var terrId)) continue;
                 foreach (var marker in outerRow)
                 {
                     if (marker.DataType != 3) continue;          // 3 = aetheryte
-                    if (!aethNames.TryGetValue(marker.DataKey.RowId, out var name)) continue;
+                    var aethId = marker.DataKey.RowId;
+                    if (!aethNames.TryGetValue(aethId, out var name)) continue;
                     if (!aethByTerritory.TryGetValue(terrId, out var list))
                     {
                         list = [];
                         aethByTerritory[terrId] = list;
                     }
-                    list.Add((marker.X, marker.Y, name));
+                    list.Add((marker.X, marker.Y, name, aethId));
                 }
             }
 
@@ -146,8 +147,15 @@ public sealed class GatheringLocator
                     }
 
                     var (dispX, dispY) = RawToDisplay(info.RawX, info.RawZ, sizeFactor);
-                    var aethName = FindClosestAetheryte(info.RawX, info.RawZ, sizeFactor,
+                    var (aethName, aethId) = FindClosestAetheryte(info.RawX, info.RawZ, sizeFactor,
                         info.TerritoryId, aethByTerritory);
+
+                    // Zones without a usable in-zone aetheryte teleport to a forced neighbour.
+                    if (AetheryteData.ZoneToAetheryte.TryGetValue(info.TerritoryId, out var forcedId))
+                    {
+                        aethId = forcedId;
+                        if (aethNames.TryGetValue(forcedId, out var forcedName)) aethName = forcedName;
+                    }
 
                     var isTimed = info.IsUnspoiled && !NodeUptime.IsAlwaysUp(info.UptimeMask);
                     var windows = isTimed ? NodeUptime.Windows(info.UptimeMask) : null;
@@ -170,6 +178,7 @@ public sealed class GatheringLocator
                         UptimeBitfield       = isTimed ? info.UptimeMask : 0,
                         TimedUptimeInfo      = windows,
                         ClosestAetheryteName = aethName,
+                        AetheryteId          = aethId,
                     };
 
                     if (!nodesByItem.TryGetValue(itemId, out var nodes))
@@ -208,11 +217,11 @@ public sealed class GatheringLocator
     }
 
     // Find closest aetheryte using MapMarker coordinates (same ×100 scale as NodeToMap)
-    private static string? FindClosestAetheryte(
+    private static (string? name, uint id) FindClosestAetheryte(
         float rawX, float rawY, ushort sizeFactor,
-        uint territoryId, Dictionary<uint, List<(int x, int y, string name)>> aethByTerritory)
+        uint territoryId, Dictionary<uint, List<(int x, int y, string name, uint id)>> aethByTerritory)
     {
-        if (!aethByTerritory.TryGetValue(territoryId, out var list)) return null;
+        if (!aethByTerritory.TryGetValue(territoryId, out var list)) return (null, 0);
 
         // Convert node raw coords to NodeToMap ×100 scale for comparison
         float c = sizeFactor > 0 ? sizeFactor / 100.0f : 1.0f;
@@ -220,15 +229,16 @@ public sealed class GatheringLocator
         float nodeY = (41.0f / c) * ((rawY + 1024) / 2048.0f) * 100;
 
         string? best = null;
+        uint bestId = 0;
         double bestDist = double.MaxValue;
-        foreach (var (ax, ay, name) in list)
+        foreach (var (ax, ay, name, id) in list)
         {
             var dx = ax - nodeX;
             var dy = ay - nodeY;
             var d = dx * dx + dy * dy;
-            if (d < bestDist) { bestDist = d; best = name; }
+            if (d < bestDist) { bestDist = d; best = name; bestId = id; }
         }
-        return best;
+        return (best, bestId);
     }
 
     private readonly struct PointInfo

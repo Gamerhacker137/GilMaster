@@ -36,7 +36,7 @@ public sealed class GatherTab
             var nodes = Plugin.GatheringLocator.GetNodesForItem(ing.ItemId);
             if (nodes.Count == 0) continue;
 
-            var best = nodes.OrderBy(n => n.RequiredLevel).First();
+            var best = PickBestNode(nodes);
             gatherPlan.Add(new GatherNode
             {
                 ItemId              = best.ItemId,
@@ -53,10 +53,51 @@ public sealed class GatherTab
                 DisplayY            = best.DisplayY,
                 RequiredLevel       = best.RequiredLevel,
                 IsUnspoiled         = best.IsUnspoiled,
+                UptimeBitfield      = best.UptimeBitfield,
                 TimedUptimeInfo     = best.TimedUptimeInfo,
                 ClosestAetheryteName = best.ClosestAetheryteName,
+                AetheryteId         = best.AetheryteId,
             });
         }
+
+        // Sort: gatherable right now first (untimed or a timed node currently up),
+        // grouped by zone for an efficient route; timed-but-down nodes last by soonest.
+        gatherPlan = gatherPlan
+            .OrderBy(n => AvailableNow(n) ? 0 : 1)
+            .ThenBy(n => AvailableNow(n) ? 0 : MinutesToUp(n))
+            .ThenBy(n => n.ZoneName, StringComparer.Ordinal)
+            .ThenBy(n => n.RequiredLevel)
+            .ToList();
+    }
+
+    // A node is gatherable now if it isn't timed, or it's timed and currently up.
+    private static bool AvailableNow(GatherNode n)
+        => !n.IsTimed || NodeUptime.LiveStatus(n.UptimeBitfield).IsUp;
+
+    private static int MinutesToUp(GatherNode n)
+        => n.IsTimed ? NodeUptime.LiveStatus(n.UptimeBitfield).MinutesToChange : 0;
+
+    // Prefer a node available right now (lowest level among those); otherwise the timed
+    // node coming up soonest.
+    private static GatherNode PickBestNode(IReadOnlyList<GatherNode> nodes)
+    {
+        GatherNode? bestAvail = null; var bestAvailLvl = int.MaxValue;
+        GatherNode? bestSoon  = null; var bestSoonMins = int.MaxValue;
+
+        foreach (var n in nodes)
+        {
+            if (AvailableNow(n))
+            {
+                if (n.RequiredLevel < bestAvailLvl) { bestAvail = n; bestAvailLvl = n.RequiredLevel; }
+            }
+            else
+            {
+                var mins = NodeUptime.LiveStatus(n.UptimeBitfield).MinutesToChange;
+                if (mins < bestSoonMins) { bestSoon = n; bestSoonMins = mins; }
+            }
+        }
+
+        return bestAvail ?? bestSoon ?? nodes.OrderBy(n => n.RequiredLevel).First();
     }
 
     public void Draw()
@@ -127,6 +168,9 @@ public sealed class GatherTab
             ImGui.SetTooltip("Copy a shopping list to clipboard — shows what to gather, buy from vendor, and buy from market.");
         ImGui.Spacing();
 
+        // ── Route: zones in gather order, each with a one-click teleport ──────
+        DrawRoute();
+
         if (ImGui.BeginTable("##gatherplan", 6,
             ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY,
             new Vector2(0, -1)))
@@ -137,7 +181,7 @@ public sealed class GatherTab
             ImGui.TableSetupColumn("Have",    ImGuiTableColumnFlags.WidthFixed, 40);
             ImGui.TableSetupColumn("Zone",    ImGuiTableColumnFlags.WidthStretch, 2);
             ImGui.TableSetupColumn("Coords",  ImGuiTableColumnFlags.WidthFixed, 80);
-            ImGui.TableSetupColumn("##act",   ImGuiTableColumnFlags.WidthFixed, 100);
+            ImGui.TableSetupColumn("##act",   ImGuiTableColumnFlags.WidthFixed, 145);
             ImGui.TableHeadersRow();
 
             foreach (var node in gatherPlan)
@@ -189,6 +233,13 @@ public sealed class GatherTab
 
                 ImGui.TableSetColumnIndex(5);
                 ImGui.PushID((int)node.ItemId);
+                if (node.AetheryteId != 0)
+                {
+                    if (ImGui.SmallButton("TP")) AetheryteData.Teleport(node.AetheryteId);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"Teleport to {node.ClosestAetheryteName ?? "the nearest aetheryte"}");
+                    ImGui.SameLine();
+                }
                 if (ImGui.SmallButton("Map")) OpenMap(node);
                 ImGui.SameLine();
                 if (ImGui.SmallButton("Chat")) PrintToChat(node);
@@ -197,6 +248,40 @@ public sealed class GatherTab
 
             ImGui.EndTable();
         }
+    }
+
+    // Compact route summary: distinct zones in plan order, each with its teleport
+    // aetheryte and a one-click teleport button.
+    private void DrawRoute()
+    {
+        if (gatherPlan is null || gatherPlan.Count == 0) return;
+
+        // Distinct (territory, aetheryte) stops in current plan order.
+        var stops = new List<(string Zone, string Aeth, uint AethId)>();
+        foreach (var n in gatherPlan)
+        {
+            if (n.AetheryteId == 0) continue;
+            if (stops.Exists(s => s.AethId == n.AetheryteId)) continue;
+            stops.Add((n.ZoneName, n.ClosestAetheryteName ?? "Aetheryte", n.AetheryteId));
+        }
+        if (stops.Count == 0) return;
+
+        ImGui.TextDisabled($"Route ({stops.Count} stop{(stops.Count == 1 ? "" : "s")}):");
+        for (var i = 0; i < stops.Count; i++)
+        {
+            var (zone, aeth, aethId) = stops[i];
+            ImGui.SameLine();
+            ImGui.PushID($"route{i}");
+            if (ImGui.SmallButton(aeth)) AetheryteData.Teleport(aethId);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Teleport to {aeth} ({zone})");
+            ImGui.PopID();
+            if (i < stops.Count - 1)
+            {
+                ImGui.SameLine();
+                ImGui.TextDisabled("→");
+            }
+        }
+        ImGui.Spacing();
     }
 
     private static unsafe int GetInventoryCount(uint itemId)

@@ -40,4 +40,5 @@ public sealed class GatherNode
     public bool IsTimed => UptimeBitfield != 0 && UptimeBitfield != 0x00FFFFFF;
 
     public string? ClosestAetheryteName { get; init; }
+    public uint    AetheryteId          { get; init; }  // Aetheryte sheet RowId, for teleporting
 }
