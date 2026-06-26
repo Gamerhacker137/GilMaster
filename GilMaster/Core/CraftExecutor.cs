@@ -59,6 +59,9 @@ public sealed class CraftExecutor : IDisposable
     private int craftsRemaining;
     private DateTime lastActionAt = DateTime.MinValue;
     private const double StepDelay = 3.5;
+    // How long to hold the first action waiting for the solver, so the plan starts
+    // from step 1 instead of desyncing behind a greedy opener.
+    private const double PlanGrace = 12.0;
     private bool wasInCraft;
     private uint lastLoggedStep = uint.MaxValue;
     private uint lastNotUsableStep = uint.MaxValue;
@@ -75,6 +78,7 @@ public sealed class CraftExecutor : IDisposable
     private int planStep;
     // Background solver task — launched on step 1, polled each tick until complete
     private Task<List<CAction>>? _planTask;
+    private DateTime _planStartedAt;
 
     public State CurrentState { get; private set; } = State.Idle;
     public string StatusText { get; private set; } = "Idle";
@@ -211,19 +215,26 @@ public sealed class CraftExecutor : IDisposable
             waitingSince = DateTime.MinValue;
         }
 
-        // Poll MCTS background task — plan arrives ~2s after craft step 1,
-        // well before the first action fires at StepDelay=3.5s.
+        // Poll the solver background task. We hold the first action until it lands
+        // (see PlanGrace below), so a completed plan is normally adopted while still
+        // at step 1. If a greedy opener already fired (plan was too slow), the plan's
+        // step-1 assumptions no longer match the craft — discard it and stay greedy.
         if (_planTask is { IsCompleted: true })
         {
             var plan  = _planTask.Status == TaskStatus.RanToCompletion ? _planTask.Result : null;
             _planTask = null;
-            if (plan?.Count > 0)
+            if (plan?.Count > 0 && state.StepCount == 1)
             {
                 plannedRotation = [.. plan];
                 planStep        = 0;
                 Service.Log.Information(
                     $"[GilMaster] Craftimizer plan ready ({plannedRotation.Length} steps): " +
                     string.Join(" → ", plannedRotation.Select(s => s.ToString())));
+            }
+            else if (plan?.Count > 0)
+            {
+                Service.Log.Warning(
+                    $"[GilMaster] Plan arrived after step {state.StepCount} — too late, continuing greedy.");
             }
             else
             {
@@ -264,6 +275,18 @@ public sealed class CraftExecutor : IDisposable
         if (CurrentState != State.Executing) return;
         if (Service.Condition[ConditionFlag.Occupied]) return;
         if ((DateTime.Now - lastActionAt).TotalSeconds < StepDelay) return;
+
+        // Hold the first action until the solver lands, so the plan starts at step 1.
+        // After PlanGrace we give up waiting and let greedy carry the craft.
+        if (plannedRotation == null && _planTask is { IsCompleted: false }
+            && state.StepCount == 1
+            && (DateTime.Now - _planStartedAt).TotalSeconds < PlanGrace)
+        {
+            StatusText = "Solving optimal rotation...";
+            OnChanged?.Invoke();
+            return;
+        }
+
         if (next == null) return;
 
         var act         = next.Value;
@@ -375,6 +398,7 @@ public sealed class CraftExecutor : IDisposable
             return;
         }
 
+        _planStartedAt = DateTime.Now;
         _planTask = Task.Run(() => CraftimizerBridge.Solve(input));
         Service.Log.Information(
             $"[GilMaster] Craftimizer solve started for recipe {currentRecipeId} " +
