@@ -17,6 +17,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool PreferHq { get; set; } = true;
     public bool AssumeGatherableFree { get; set; } = true;
     public bool ScanDatacenter { get; set; } = false; // scan whole DC instead of home world
+    public bool ScanAllJobs { get; set; } = false;    // scan every crafting job, ignore level filter
     public int SortColumn { get; set; } = 5;          // 0=Item,1=Lvl,2=NQ Price,3=HQ Price,4=Sales/day,5=Gil/hr
     public bool SortDescending { get; set; } = true;
 

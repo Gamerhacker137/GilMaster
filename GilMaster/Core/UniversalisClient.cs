@@ -2,6 +2,7 @@ using GilMaster.Models.Universalis;
 using Polly;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -53,24 +54,21 @@ public sealed class UniversalisClient : IDisposable
         }
     }
 
-    // Fetches up to 100 items in a single request. Returns a dict of itemId→response.
-    public async Task<Dictionary<uint, MarketDataResponse>> GetBatchAsync(IEnumerable<uint> itemIds, string world, CancellationToken ct = default)
+    // Fetches items in batches of 100. Returns a dict of itemId→response.
+    // onProgress, if given, is invoked after each batch with (itemsDone, itemsTotal).
+    public async Task<Dictionary<uint, MarketDataResponse>> GetBatchAsync(
+        IEnumerable<uint> itemIds, string world, CancellationToken ct = default,
+        Action<int, int>? onProgress = null)
     {
+        var ids = itemIds.ToList();
         var result = new Dictionary<uint, MarketDataResponse>();
-        var batch = new List<uint>();
 
-        foreach (var id in itemIds)
+        for (var i = 0; i < ids.Count; i += MaxItemsPerBatch)
         {
-            batch.Add(id);
-            if (batch.Count >= MaxItemsPerBatch)
-            {
-                await FetchBatch(batch, world, result, ct).ConfigureAwait(false);
-                batch.Clear();
-            }
-        }
-
-        if (batch.Count > 0)
+            var batch = ids.GetRange(i, Math.Min(MaxItemsPerBatch, ids.Count - i));
             await FetchBatch(batch, world, result, ct).ConfigureAwait(false);
+            onProgress?.Invoke(Math.Min(i + MaxItemsPerBatch, ids.Count), ids.Count);
+        }
 
         return result;
     }
@@ -81,7 +79,7 @@ public sealed class UniversalisClient : IDisposable
         try
         {
             using var stream = await pipeline.ExecuteAsync(
-                async t => await client.GetStreamAsync($"{world}/{joined}?listings=5&entries=10", t).ConfigureAwait(false),
+                async t => await client.GetStreamAsync($"{world}/{joined}?listings=5&entries=20", t).ConfigureAwait(false),
                 ct).ConfigureAwait(false);
 
             var response = await JsonSerializer.DeserializeAsync<MultiItemMarketDataResponse>(stream, cancellationToken: ct).ConfigureAwait(false);

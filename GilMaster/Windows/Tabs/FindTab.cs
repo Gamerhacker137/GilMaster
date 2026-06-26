@@ -15,8 +15,8 @@ public sealed class FindTab
 
     private static readonly string[] JobNames = CraftJobNames.FullNames;
 
-    // Columns: Item, Lvl, NQ Price, HQ Price, Sales/day, Gil/hr
-    private static readonly string[] ColNames = ["Item", "Lvl", "NQ Price", "HQ Price", "Sales/day", "Gil/hr"];
+    // Columns: Item, Lvl, NQ sale price, HQ sale price, Sales/day, Gil/day (demand×price), Gil/hr
+    private static readonly string[] ColNames = ["Item", "Lvl", "NQ Sells", "HQ Sells", "Sales/day", "Gil/day", "Gil/hr"];
 
     public ProfitableItem? SelectedItem => selected;
 
@@ -55,19 +55,28 @@ public sealed class FindTab
         ImGui.Separator();
 
         // ── Controls row ──────────────────────────────────────────────
-        ImGui.SetNextItemWidth(140);
-        if (ImGui.BeginCombo("Job##find-job", JobNames[config.SelectedCraftJob]))
+        using (new DisableScope(config.ScanAllJobs))
         {
-            for (var i = 0; i < JobNames.Length; i++)
+            ImGui.SetNextItemWidth(140);
+            if (ImGui.BeginCombo("Job##find-job", JobNames[config.SelectedCraftJob]))
             {
-                if (ImGui.Selectable(JobNames[i], config.SelectedCraftJob == i))
+                for (var i = 0; i < JobNames.Length; i++)
                 {
-                    config.SelectedCraftJob = i;
-                    config.Save();
+                    if (ImGui.Selectable(JobNames[i], config.SelectedCraftJob == i))
+                    {
+                        config.SelectedCraftJob = i;
+                        config.Save();
+                    }
                 }
+                ImGui.EndCombo();
             }
-            ImGui.EndCombo();
         }
+
+        ImGui.SameLine();
+        var allJobs = config.ScanAllJobs;
+        if (ImGui.Checkbox("All jobs##scan-all", ref allJobs)) { config.ScanAllJobs = allJobs; config.Save(); }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Scan every crafting job and ignore the level filter — surfaces the highest-demand,\nhighest-value items across all crafts (furniture, gear, consumables). Slower: prices thousands of items.");
 
         ImGui.SameLine();
         ImGui.SetNextItemWidth(70);
@@ -98,7 +107,7 @@ public sealed class FindTab
         using (var disabled = new DisableScope(engine.IsScanning || string.IsNullOrEmpty(scanTarget)))
         {
             if (ImGui.Button(engine.IsScanning ? "Scanning..." : "Scan"))
-                engine.StartScan(config.SelectedCraftJob, effectiveLevel, scanTarget, config);
+                engine.StartScan(config.SelectedCraftJob, effectiveLevel, scanTarget, config, config.ScanAllJobs);
         }
 
         if (engine.IsScanning)
@@ -152,7 +161,7 @@ public sealed class FindTab
         // NQ/HQ mode toggle hint
         ImGui.TextDisabled("Tip: check \"Prefer HQ\" in the Craft tab to see HQ-optimized profit. Gil/hr assumes NQ unless HQ price is shown.");
 
-        if (ImGui.BeginTable("##results", 6,
+        if (ImGui.BeginTable("##results", 7,
             ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg |
             ImGuiTableFlags.ScrollY | ImGuiTableFlags.SizingStretchProp,
             new Vector2(0, -1)))
@@ -160,9 +169,10 @@ public sealed class FindTab
             ImGui.TableSetupScrollFreeze(0, 1);
             ImGui.TableSetupColumn("Item",     ImGuiTableColumnFlags.WidthStretch, 3);
             ImGui.TableSetupColumn("Lvl",      ImGuiTableColumnFlags.WidthFixed, 36);
-            ImGui.TableSetupColumn("NQ Price", ImGuiTableColumnFlags.WidthFixed, 80);
-            ImGui.TableSetupColumn("HQ Price", ImGuiTableColumnFlags.WidthFixed, 80);
+            ImGui.TableSetupColumn("NQ Sells", ImGuiTableColumnFlags.WidthFixed, 80);
+            ImGui.TableSetupColumn("HQ Sells", ImGuiTableColumnFlags.WidthFixed, 80);
             ImGui.TableSetupColumn("Sales/day",ImGuiTableColumnFlags.WidthFixed, 72);
+            ImGui.TableSetupColumn("Gil/day",  ImGuiTableColumnFlags.WidthFixed, 72);
             ImGui.TableSetupColumn("Gil/hr",   ImGuiTableColumnFlags.WidthFixed, 72);
 
             // Clickable sort headers
@@ -196,18 +206,23 @@ public sealed class FindTab
                     selected = item;
                     MainWindow.SwitchToGather(item);
                 }
-                if (ImGui.IsItemHovered() && item.AmountResult > 1)
-                    ImGui.SetTooltip($"Yields {item.AmountResult}× per synth");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(
+                        $"{item.CraftJobName} · Lv {item.RecipeLevel}"
+                        + (item.AmountResult > 1 ? $" · yields {item.AmountResult}×" : "")
+                        + $"\nFloor (cheapest listing): NQ {item.MinListingPrice:N0}"
+                        + (item.MinListingHqPrice > 0 ? $" / HQ {item.MinListingHqPrice:N0}" : "")
+                        + $"\n~{item.RecentUnitsSold} sold recently");
 
                 ImGui.TableSetColumnIndex(1);
                 ImGui.Text(item.RecipeLevel.ToString());
 
                 ImGui.TableSetColumnIndex(2);
-                ImGui.Text($"{item.MinListingPrice:N0}");
+                ImGui.Text($"{item.DisplayNqPrice:N0}");
 
                 ImGui.TableSetColumnIndex(3);
-                if (item.MinListingHqPrice > 0)
-                    ImGui.TextColored(new Vector4(0.4f, 0.9f, 1f, 1f), $"{item.MinListingHqPrice:N0}");
+                if (item.DisplayHqPrice > 0 && item.RealisticHqPrice > 0)
+                    ImGui.TextColored(new Vector4(0.4f, 0.9f, 1f, 1f), $"{item.DisplayHqPrice:N0}");
                 else
                     ImGui.TextDisabled("—");
 
@@ -219,7 +234,16 @@ public sealed class FindTab
                     ImGui.TextColored(new Vector4(0.4f, 0.9f, 1f, 1f), $"/{item.SaleVelocityHq:F1}");
                 }
 
+                // Gil/day — realistic price × how fast it sells. This is the headline
+                // "hot item" metric: high means it sells a lot AND for a good price.
                 ImGui.TableSetColumnIndex(5);
+                var perDay = item.RevenuePerDay;
+                var dayColor = perDay > 1_000_000 ? new Vector4(0.3f, 1f, 0.4f, 1f) :
+                               perDay >   100_000 ? new Vector4(1f, 0.9f, 0.3f, 1f) :
+                                                    new Vector4(0.7f, 0.7f, 0.7f, 1f);
+                ImGui.TextColored(dayColor, perDay >= 1_000_000 ? $"{perDay / 1_000_000:F1}M" : $"{perDay / 1000:F0}k");
+
+                ImGui.TableSetColumnIndex(6);
                 // Show NQ / HQ gil/hr side by side so user can compare
                 var nqGph = item.GetGilPerHour(false);
                 var hqGph = item.GetGilPerHour(true);
@@ -240,15 +264,17 @@ public sealed class FindTab
 
     private static List<ProfitableItem> GetSorted(IReadOnlyList<ProfitableItem> source, Configuration config)
     {
-        // Default sort (col 5) uses NQ gil/hr; HQ is shown as supplementary
+        // Default sort (col 5 = Gil/day) ranks by demand × realistic price — the
+        // "what sells a lot for a good price" metric the Find tab is built around.
         IEnumerable<ProfitableItem> ordered = config.SortColumn switch
         {
             0 => source.OrderBy(i => i.Name),
             1 => source.OrderBy(i => i.RecipeLevel),
-            2 => source.OrderBy(i => i.MinListingPrice),
-            3 => source.OrderBy(i => i.MinListingHqPrice),
+            2 => source.OrderBy(i => i.DisplayNqPrice),
+            3 => source.OrderBy(i => i.DisplayHqPrice),
             4 => source.OrderBy(i => i.SaleVelocity),
-            _ => source.OrderBy(i => i.GetGilPerHour(false)), // col 5 = NQ gil/hr
+            6 => source.OrderBy(i => i.GetGilPerHour(false)), // col 6 = NQ gil/hr
+            _ => source.OrderBy(i => i.RevenuePerDay),         // col 5 = Gil/day (demand × price)
         };
         if (config.SortDescending) ordered = ordered.Reverse();
         return [.. ordered];

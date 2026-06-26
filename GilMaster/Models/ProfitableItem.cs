@@ -12,18 +12,34 @@ public sealed class ProfitableItem
 
     public long MinListingPrice { get; init; }
     public long MinListingHqPrice { get; init; }
+    // Realistic going sale price (median of recent actual sales) — robust to lowball listings.
+    public long RealisticNqPrice { get; init; }
+    public long RealisticHqPrice { get; init; }
     public double SaleVelocity { get; init; }
     public double SaleVelocityHq { get; init; }
+    public long RecentUnitsSold { get; init; }
 
     public long EstimatedMaterialCost { get; set; }
 
+    // Prices used for profit/display: realistic sale price, falling back to the cheapest listing.
+    public long DisplayNqPrice => RealisticNqPrice > 0 ? RealisticNqPrice : MinListingPrice;
+    public long DisplayHqPrice => RealisticHqPrice > 0 ? RealisticHqPrice
+                                : MinListingHqPrice > 0 ? MinListingHqPrice
+                                : DisplayNqPrice;
+
     // Profit per synth — accounts for yield (AmountResult items per craft)
-    public long ProfitNq => MinListingPrice * AmountResult - EstimatedMaterialCost;
-    public long ProfitHq => (MinListingHqPrice > 0 ? MinListingHqPrice : MinListingPrice) * AmountResult - EstimatedMaterialCost;
+    public long ProfitNq => DisplayNqPrice * AmountResult - EstimatedMaterialCost;
+    public long ProfitHq => DisplayHqPrice * AmountResult - EstimatedMaterialCost;
 
     // Legacy — prefer HQ price when available (used for backward-compat and cache serialisation)
     public long Profit => ProfitHq;
+
+    // Ranking score: realistic profit × how fast it sells = gil/day you can actually capture.
+    // This weights both "sells for a lot" and "lots of people buy it" (demand).
     public double ProfitScore => ProfitHq * BestVelocity;
+
+    // Daily market revenue flow (price × demand), ignoring craft cost — pure "hot item" signal.
+    public double RevenuePerDay => DisplayHqPrice * AmountResult * BestVelocity;
 
     // Per-quality gil/hour helpers — callers choose which to display
     public long GetGilPerHour(bool preferHq) => (long)((preferHq ? ProfitHq : ProfitNq) * CraftsPerHour);

@@ -39,7 +39,7 @@ public sealed class ProfitEngine : IDisposable
     private static string CacheFile =>
         Path.Combine(Service.PluginInterface.GetPluginConfigDirectory(), "last_scan.json");
 
-    public void StartScan(int craftJobId, int playerLevel, string worldOrDc, Configuration config)
+    public void StartScan(int craftJobId, int playerLevel, string worldOrDc, Configuration config, bool allJobs = false)
     {
         scanCts?.Cancel();
         scanCts = new CancellationTokenSource();
@@ -51,7 +51,7 @@ public sealed class ProfitEngine : IDisposable
         Results = [];
         OnResultsUpdated?.Invoke();
 
-        Task.Run(() => RunScan(craftJobId, playerLevel, worldOrDc, config, ct), ct);
+        Task.Run(() => RunScan(craftJobId, playerLevel, worldOrDc, config, allJobs, ct), ct);
     }
 
     public void CancelScan()
@@ -61,7 +61,7 @@ public sealed class ProfitEngine : IDisposable
         ScanStatus = "Cancelled";
     }
 
-    private async Task RunScan(int craftJobId, int playerLevel, string worldOrDc, Configuration config, CancellationToken ct)
+    private async Task RunScan(int craftJobId, int playerLevel, string worldOrDc, Configuration config, bool allJobs, CancellationToken ct)
     {
         try
         {
@@ -72,20 +72,25 @@ public sealed class ProfitEngine : IDisposable
             var minLevel = Math.Max(1, playerLevel - 10);
             var maxLevel = playerLevel + config.LevelBuffer;
 
-            var candidates = new List<(uint recipeId, uint itemId, int level, int amountResult)>();
+            // (recipeId, itemId, level, amountResult, craftJobId)
+            var candidates = new List<(uint recipeId, uint itemId, int level, int amountResult, int craftJobId)>();
             foreach (var recipe in recipeSheet)
             {
                 ct.ThrowIfCancellationRequested();
-                if ((int)recipe.CraftType.RowId != craftJobId) continue;
+                var thisJob = (int)recipe.CraftType.RowId;
+                if (!allJobs && thisJob != craftJobId) continue;
 
                 var level = (int)recipe.RecipeLevelTable.Value.ClassJobLevel;
-                if (level < minLevel || level > maxLevel) continue;
+                // All-jobs mode ignores the level window so high-value items (furniture,
+                // gear, consumables across every craft) all surface — the user asked for
+                // no restriction. Per-job mode keeps the level window around the player.
+                if (!allJobs && (level < minLevel || level > maxLevel)) continue;
 
                 var item = recipe.ItemResult.ValueNullable;
                 if (item is null || item.Value.IsUntradable || item.Value.Name.IsEmpty) continue;
 
                 var amountResult = Math.Max(1, (int)recipe.AmountResult);
-                candidates.Add((recipe.RowId, recipe.ItemResult.RowId, level, amountResult));
+                candidates.Add((recipe.RowId, recipe.ItemResult.RowId, level, amountResult, thisJob));
             }
 
             if (candidates.Count == 0)
@@ -100,13 +105,18 @@ public sealed class ProfitEngine : IDisposable
             ScanProgress = 0.1f;
 
             var itemIds = candidates.Select(c => c.itemId).Distinct();
-            var marketData = await universalis.GetBatchAsync(itemIds, worldOrDc, ct).ConfigureAwait(false);
+            var marketData = await universalis.GetBatchAsync(itemIds, worldOrDc, ct, (done, total) =>
+            {
+                ScanProgress = 0.1f + 0.6f * done / Math.Max(1, total);
+                ScanStatus = $"Fetching market data {done}/{total} on {worldOrDc}...";
+                OnResultsUpdated?.Invoke();
+            }).ConfigureAwait(false);
 
             ScanProgress = 0.7f;
             ScanStatus = "Scoring results...";
 
             var results = new List<ProfitableItem>();
-            foreach (var (recipeId, itemId, level, amountResult) in candidates)
+            foreach (var (recipeId, itemId, level, amountResult, cjId) in candidates)
             {
                 ct.ThrowIfCancellationRequested();
                 if (!marketData.TryGetValue(itemId, out var data) || !data.HasData) continue;
@@ -114,8 +124,11 @@ public sealed class ProfitEngine : IDisposable
                 var velocity = config.PreferHq ? data.SaleVelocityHq + data.SaleVelocityNq : data.SaleVelocity;
                 if (velocity < config.MinSaleVelocity) continue;
 
-                var minPrice = config.PreferHq && data.MinPriceHq > 0 ? data.MinPriceHq : data.MinPrice;
-                if (minPrice <= 0) continue;
+                // Realistic sale price (median of recent sales). Skip items that don't
+                // actually move (no real sale price we can stand behind).
+                var realisticNq = data.RealisticPrice(false);
+                var realisticHq = data.RealisticPrice(true);
+                if (realisticNq <= 0 && realisticHq <= 0) continue;
 
                 var item = itemSheet.GetRowOrDefault(itemId);
                 results.Add(new ProfitableItem
@@ -124,13 +137,16 @@ public sealed class ProfitEngine : IDisposable
                     RecipeId = recipeId,
                     Name = item?.Name.ExtractText() ?? $"Item#{itemId}",
                     RecipeLevel = level,
-                    CraftJobId = craftJobId,
-                    CraftJobName = CraftJobNames.Full(craftJobId),
+                    CraftJobId = cjId,
+                    CraftJobName = CraftJobNames.Full(cjId),
                     AmountResult = amountResult,
                     MinListingPrice = data.MinPrice,
                     MinListingHqPrice = data.MinPriceHq,
+                    RealisticNqPrice = realisticNq,
+                    RealisticHqPrice = realisticHq,
                     SaleVelocity = data.SaleVelocity,
                     SaleVelocityHq = data.SaleVelocityHq,
+                    RecentUnitsSold = data.RecentUnitsSold,
                     EstimatedMaterialCost = 0,
                     HasActiveListings = data.UnitsForSale > 0,
                 });
@@ -150,7 +166,9 @@ public sealed class ProfitEngine : IDisposable
             // Re-rank with real material costs
             Results = [.. ranked.OrderByDescending(r => r.ProfitScore)];
             ScanProgress = 1f;
-            ScanStatus = $"Done — {Results.Count} results" + (config.ScanDatacenter ? " (DC)" : "");
+            ScanStatus = $"Done — {Results.Count} results"
+                + (allJobs ? " (all jobs)" : "")
+                + (config.ScanDatacenter ? " (DC)" : "");
 
             SaveCache(Results);
         }
@@ -279,8 +297,11 @@ public sealed class ProfitEngine : IDisposable
                     AmountResult = m.amountResult,
                     MinListingPrice = data?.MinPrice ?? 0,
                     MinListingHqPrice = data?.MinPriceHq ?? 0,
+                    RealisticNqPrice = data?.RealisticPrice(false) ?? 0,
+                    RealisticHqPrice = data?.RealisticPrice(true) ?? 0,
                     SaleVelocity = data?.SaleVelocity ?? 0,
                     SaleVelocityHq = data?.SaleVelocityHq ?? 0,
+                    RecentUnitsSold = data?.RecentUnitsSold ?? 0,
                     EstimatedMaterialCost = 0,
                     HasActiveListings = (data?.UnitsForSale ?? 0) > 0,
                 });
