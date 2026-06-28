@@ -161,10 +161,9 @@ public sealed class ProfitEngine : IDisposable
             ScanStatus = "Fetching material costs...";
             OnResultsUpdated?.Invoke();
 
-            // Enrich top 10 results with actual material costs
-            var enrichTasks = ranked.Take(10).Select(item =>
-                EnrichMaterialCostAsync(item, worldOrDc, config.AssumeGatherableFree, ct));
-            await Task.WhenAll(enrichTasks).ConfigureAwait(false);
+            // Price the materials for EVERY displayed result (one batched fetch) so
+            // profit/net figures are honest across the whole list — not just the top 10.
+            await EnrichAllMaterialCostsAsync(ranked, worldOrDc, config.AssumeGatherableFree, ct).ConfigureAwait(false);
 
             // Re-rank with real material costs
             Results = [.. ranked.OrderByDescending(r => r.ProfitScore)];
@@ -318,10 +317,8 @@ public sealed class ProfitEngine : IDisposable
             SearchStatus = $"{results.Count} match(es)" + (truncated ? $" (showing first {SearchMatchCap})" : "");
             OnResultsUpdated?.Invoke();
 
-            // Enrich the first few with real material costs so profit shows up
-            var enrichTasks = results.Take(10)
-                .Select(item => EnrichMaterialCostAsync(item, worldOrDc, config.AssumeGatherableFree, ct));
-            await Task.WhenAll(enrichTasks).ConfigureAwait(false);
+            // Price every match's materials in one batch so net profit is honest.
+            await EnrichAllMaterialCostsAsync(results, worldOrDc, config.AssumeGatherableFree, ct).ConfigureAwait(false);
             OnResultsUpdated?.Invoke();
         }
         catch (OperationCanceledException)
@@ -340,33 +337,48 @@ public sealed class ProfitEngine : IDisposable
         }
     }
 
-    public async Task EnrichMaterialCostAsync(ProfitableItem item, string worldOrDc, bool assumeGatherablesFree, CancellationToken ct = default)
+    /// <summary>
+    /// Prices the materials for every item in <paramref name="items"/> using a single
+    /// combined Universalis fetch (all unique leaf ingredients across the whole list),
+    /// then sets each item's EstimatedMaterialCost. Far cheaper than one fetch per item
+    /// and makes net-profit honest for every displayed row, not just the top few.
+    /// </summary>
+    public async Task EnrichAllMaterialCostsAsync(IReadOnlyList<ProfitableItem> items, string worldOrDc, bool assumeGatherablesFree, CancellationToken ct = default)
     {
-        var ingredients = Plugin.RecipeResolver.ResolveFlat(item.RecipeId);
-        if (ingredients.Length == 0) return;
+        if (items.Count == 0) return;
 
-        var needsPricing = ingredients
-            .Where(i => !i.IsShopBuyable && !(assumeGatherablesFree && i.IsGatherable))
-            .Select(i => i.ItemId)
-            .Distinct()
-            .ToList();
-
-        Dictionary<uint, MarketDataResponse> prices = [];
-        if (needsPricing.Count > 0)
-            prices = await universalis.GetBatchAsync(needsPricing, worldOrDc, ct).ConfigureAwait(false);
-
-        long total = 0;
-        foreach (var ing in ingredients)
+        // Resolve each item's flat ingredient list once, and collect every unique
+        // ingredient that needs a market price into a single set.
+        var perItem  = new List<(ProfitableItem Item, RecipeIngredient[] Ingredients)>(items.Count);
+        var toPrice  = new HashSet<uint>();
+        foreach (var item in items)
         {
-            if (prices.TryGetValue(ing.ItemId, out var data))
-            {
-                ing.MarketMinPrice = data.MinPrice;
-                ing.MarketPriceFetched = true;
-            }
-            total += ing.EstimatedUnitCost(assumeGatherablesFree) * ing.Quantity;
+            ct.ThrowIfCancellationRequested();
+            var ings = Plugin.RecipeResolver.ResolveFlat(item.RecipeId);
+            perItem.Add((item, ings));
+            foreach (var ing in ings)
+                if (!ing.IsShopBuyable && !(assumeGatherablesFree && ing.IsGatherable))
+                    toPrice.Add(ing.ItemId);
         }
 
-        item.EstimatedMaterialCost = total;
+        Dictionary<uint, MarketDataResponse> prices = [];
+        if (toPrice.Count > 0)
+            prices = await universalis.GetBatchAsync(toPrice, worldOrDc, ct).ConfigureAwait(false);
+
+        foreach (var (item, ings) in perItem)
+        {
+            long total = 0;
+            foreach (var ing in ings)
+            {
+                if (prices.TryGetValue(ing.ItemId, out var data))
+                {
+                    ing.MarketMinPrice = data.MinPrice;
+                    ing.MarketPriceFetched = true;
+                }
+                total += ing.EstimatedUnitCost(assumeGatherablesFree) * ing.Quantity;
+            }
+            item.EstimatedMaterialCost = total;
+        }
     }
 
     public bool TryLoadCache()

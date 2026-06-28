@@ -194,7 +194,7 @@ public sealed class GatherTab
             ImGui.TableSetupColumn("Have",    ImGuiTableColumnFlags.WidthFixed, 40);
             ImGui.TableSetupColumn("Zone",    ImGuiTableColumnFlags.WidthStretch, 2);
             ImGui.TableSetupColumn("Coords",  ImGuiTableColumnFlags.WidthFixed, 80);
-            ImGui.TableSetupColumn("##act",   ImGuiTableColumnFlags.WidthFixed, 145);
+            ImGui.TableSetupColumn("##act",   ImGuiTableColumnFlags.WidthFixed, 190);
             ImGui.TableHeadersRow();
 
             foreach (var node in gatherPlan)
@@ -256,6 +256,13 @@ public sealed class GatherTab
                 if (ImGui.SmallButton("Map")) OpenMap(node);
                 ImGui.SameLine();
                 if (ImGui.SmallButton("Chat")) PrintToChat(node);
+                if (GatherBuddyBridge.IsAvailable)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Gath")) GatherBuddyBridge.Gather(node.ItemName);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"Tell GatherBuddy to gather {node.ItemName}.");
+                }
                 ImGui.PopID();
             }
 
@@ -372,7 +379,7 @@ public sealed class GatherTab
             ImGui.TableSetupColumn("Lvl",    ImGuiTableColumnFlags.WidthFixed, 36);
             ImGui.TableSetupColumn("Coords", ImGuiTableColumnFlags.WidthFixed, 78);
             ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 90);
-            ImGui.TableSetupColumn("##act",  ImGuiTableColumnFlags.WidthFixed, 145);
+            ImGui.TableSetupColumn("##act",  ImGuiTableColumnFlags.WidthFixed, 190);
             ImGui.TableHeadersRow();
 
             foreach (var node in materialNodes)
@@ -415,6 +422,13 @@ public sealed class GatherTab
                 if (ImGui.SmallButton("Map")) OpenMap(node);
                 ImGui.SameLine();
                 if (ImGui.SmallButton("Chat")) PrintToChat(node);
+                if (GatherBuddyBridge.IsAvailable)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Gath")) GatherBuddyBridge.Gather(node.ItemName);
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"Tell GatherBuddy to gather {node.ItemName}.");
+                }
                 ImGui.PopID();
             }
             ImGui.EndTable();

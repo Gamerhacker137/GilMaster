@@ -109,16 +109,26 @@ public sealed class RecipeResolver
         }
     }
 
+    // itemResultId → first recipe that produces it. Built once; a linear sheet
+    // scan per ingredient was far too slow once we price every result's mats.
+    private static Dictionary<uint, uint>? _itemToRecipe;
+
     // Looks up the first recipe that produces this item.
     public uint? FindRecipeFor(uint itemId)
     {
-        var recipeSheet = Service.DataManager.GetExcelSheet<Recipe>();
-        foreach (var recipe in recipeSheet)
+        _itemToRecipe ??= BuildItemToRecipe();
+        return _itemToRecipe.TryGetValue(itemId, out var recipeId) ? recipeId : null;
+    }
+
+    private static Dictionary<uint, uint> BuildItemToRecipe()
+    {
+        var map = new Dictionary<uint, uint>();
+        foreach (var recipe in Service.DataManager.GetExcelSheet<Recipe>())
         {
-            if (recipe.ItemResult.RowId == itemId)
-                return recipe.RowId;
+            var id = recipe.ItemResult.RowId;
+            if (id != 0 && !map.ContainsKey(id)) map[id] = recipe.RowId;
         }
-        return null;
+        return map;
     }
 
     private static long EstimateShopPrice(uint itemId)

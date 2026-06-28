@@ -282,7 +282,11 @@ public sealed class FindTab
                         + (item.MinListingHqPrice > 0 ? $" / HQ {item.MinListingHqPrice:N0}" : "")
                         + $"\n~{item.RecentUnitsSold} sold recently"
                         + $"\n{item.ActiveListings} listing(s) up · {item.UnitsForSale} units for sale"
-                        + $"\n{CompetitionLabel(item.CompetitionTier)}");
+                        + $"\n{CompetitionLabel(item.CompetitionTier)}"
+                        + $"\nMat cost/craft: {item.EstimatedMaterialCost:N0}"
+                        + (config.AssumeGatherableFree ? " (gathered = free)" : " (mats from market)")
+                        + $"\nNet/craft: NQ {item.ProfitNq:N0}"
+                        + (item.DisplayHqPrice > item.DisplayNqPrice ? $" · HQ {item.ProfitHq:N0}" : ""));
 
                 ImGui.TableSetColumnIndex(1);
                 ImGui.Text(item.RecipeLevel.ToString());
