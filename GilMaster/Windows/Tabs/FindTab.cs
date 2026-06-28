@@ -18,6 +18,18 @@ public sealed class FindTab
     // Columns: Item, Lvl, NQ sale price, HQ sale price, Sales/day, Gil/day (demand×price), Gil/hr
     private static readonly string[] ColNames = ["Item", "Lvl", "NQ Sells", "HQ Sells", "Sales/day", "Gil/day", "Gil/hr"];
 
+    // Quick-sort dropdown options → the column index each maps to.
+    private static readonly (string Label, int Col)[] SortOptions =
+    [
+        ("Income / day", 5),
+        ("Income / hr",  6),
+        ("Level",        1),
+        ("Sales / day",  4),
+        ("NQ price",     2),
+        ("HQ price",     3),
+        ("Name",         0),
+    ];
+
     public ProfitableItem? SelectedItem => selected;
 
     public void Draw()
@@ -141,6 +153,33 @@ public sealed class FindTab
         ImGui.SameLine();
         var free = config.AssumeGatherableFree;
         if (ImGui.Checkbox("Gathered = free##free", ref free)) { config.AssumeGatherableFree = free; config.Save(); }
+
+        // ── Sort control: pick a metric, flip direction (low↔high) ────
+        ImGui.SameLine();
+        ImGui.TextDisabled("Sort by");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(120);
+        var curIdx = Array.FindIndex(SortOptions, o => o.Col == config.SortColumn);
+        if (curIdx < 0) curIdx = 0;
+        if (ImGui.BeginCombo("##sortby", SortOptions[curIdx].Label))
+        {
+            for (var i = 0; i < SortOptions.Length; i++)
+                if (ImGui.Selectable(SortOptions[i].Label, i == curIdx))
+                {
+                    config.SortColumn = SortOptions[i].Col;
+                    config.Save();
+                }
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button(config.SortDescending ? "▼ High→Low" : "▲ Low→High"))
+        {
+            config.SortDescending = !config.SortDescending;
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Flip the sort direction — e.g. low level vs high level, or low income vs high income.\n(You can also click any column header to sort by it.)");
 
         ImGui.Separator();
 
