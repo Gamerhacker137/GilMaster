@@ -74,16 +74,17 @@ public sealed class FlipTab
         }
 
         // ── Results ───────────────────────────────────────────────────────
-        if (ImGui.BeginTable("##flipresults", 6,
+        if (ImGui.BeginTable("##flipresults", 7,
             ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.SizingStretchProp,
             new Vector2(0, -1)))
         {
             ImGui.TableSetupScrollFreeze(0, 1);
             ImGui.TableSetupColumn("Item",        ImGuiTableColumnFlags.WidthStretch, 3);
-            ImGui.TableSetupColumn("Buy @",       ImGuiTableColumnFlags.WidthFixed, 90);
-            ImGui.TableSetupColumn("From",        ImGuiTableColumnFlags.WidthFixed, 90);
-            ImGui.TableSetupColumn("Home sells",  ImGuiTableColumnFlags.WidthFixed, 90);
-            ImGui.TableSetupColumn("Margin/ea",   ImGuiTableColumnFlags.WidthFixed, 90);
+            ImGui.TableSetupColumn("Buy @",       ImGuiTableColumnFlags.WidthFixed, 92);
+            ImGui.TableSetupColumn("From",        ImGuiTableColumnFlags.WidthFixed, 86);
+            ImGui.TableSetupColumn("Home sells",  ImGuiTableColumnFlags.WidthFixed, 86);
+            ImGui.TableSetupColumn("Net/ea",      ImGuiTableColumnFlags.WidthFixed, 84);
+            ImGui.TableSetupColumn("Stack",       ImGuiTableColumnFlags.WidthFixed, 84);
             ImGui.TableSetupColumn("Sells/day",   ImGuiTableColumnFlags.WidthFixed, 70);
             ImGui.TableHeadersRow();
 
@@ -98,6 +99,13 @@ public sealed class FlipTab
 
                 ImGui.TableSetColumnIndex(1);
                 ImGui.Text($"{r.BuyPrice:N0}");
+                if (r.BuyAvailable > 0)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled($"×{r.BuyAvailable}");
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"~{r.BuyAvailable} unit(s) available within 5% of this price on {r.BuyWorld}.");
 
                 ImGui.TableSetColumnIndex(2);
                 var sameWorld = string.Equals(r.BuyWorld, r.HomeWorld, StringComparison.OrdinalIgnoreCase);
@@ -110,19 +118,34 @@ public sealed class FlipTab
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip($"Home going rate (recent sales). Current home floor: {(r.HomeFloor > 0 ? r.HomeFloor.ToString("N0") : "none listed")}.");
 
+                // Net per-unit margin AFTER the 5% market tax.
                 ImGui.TableSetColumnIndex(4);
-                var margin = r.Margin;
-                var color = margin <= 0 ? new Vector4(1f, 0.45f, 0.4f, 1f) :
-                            margin > 50_000 ? new Vector4(0.3f, 1f, 0.4f, 1f) :
-                            margin > 5_000  ? new Vector4(1f, 0.9f, 0.3f, 1f) :
-                                              new Vector4(0.8f, 0.8f, 0.8f, 1f);
-                ImGui.TextColored(color, $"{margin:N0}");
+                var net = r.NetMargin;
+                var color = net <= 0 ? new Vector4(1f, 0.45f, 0.4f, 1f) :
+                            net > 50_000 ? new Vector4(0.3f, 1f, 0.4f, 1f) :
+                            net > 5_000  ? new Vector4(1f, 0.9f, 0.3f, 1f) :
+                                           new Vector4(0.8f, 0.8f, 0.8f, 1f);
+                ImGui.TextColored(color, $"{net:N0}");
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip(margin > 0
-                        ? $"Buy on {r.BuyWorld} for {r.BuyPrice:N0}, sell at home ~{r.HomeGoing:N0} → +{margin:N0}/ea ({r.MarginPct:F0}%).\nWatch the home floor and competition before relisting."
-                        : "No profit at the current home rate.");
+                    ImGui.SetTooltip(net > 0
+                        ? $"Buy on {r.BuyWorld} for {r.BuyPrice:N0}, sell at home ~{r.HomeGoing:N0}.\nAfter the 5% market tax: +{net:N0}/ea ({r.NetMarginPct:F0}%). Gross {r.Margin:N0}.\nWatch the home floor and competition before relisting."
+                        : $"No profit after the 5% market tax (gross would be {r.Margin:N0}).");
 
+                // Best-case profit on the whole cheap stack.
                 ImGui.TableSetColumnIndex(5);
+                var stack = r.NetStackProfit;
+                if (stack > 0)
+                {
+                    var sColor = stack > 500_000 ? new Vector4(0.3f, 1f, 0.4f, 1f) :
+                                 stack >  50_000 ? new Vector4(1f, 0.9f, 0.3f, 1f) :
+                                                   new Vector4(0.8f, 0.8f, 0.8f, 1f);
+                    ImGui.TextColored(sColor, stack >= 1_000_000 ? $"{stack / 1_000_000f:F1}M" : $"{stack / 1000f:F0}k");
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"If you buy all ~{r.BuyAvailable} cheap unit(s) and sell at the home rate: ~{stack:N0} net.\nReality check against Sells/day — don't flood a slow market.");
+                }
+                else ImGui.TextDisabled("—");
+
+                ImGui.TableSetColumnIndex(6);
                 ImGui.Text($"{r.Velocity:F1}");
             }
 

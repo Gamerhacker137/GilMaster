@@ -40,7 +40,7 @@ public sealed class FlipEngine : IDisposable
                     results.RemoveAll(x => x.ItemId == r.ItemId);
                     results.Insert(0, r);
                     Results = [.. results];
-                    Status = r.Margin > 0 ? $"{r.Name}: buy on {r.BuyWorld}, ~{r.Margin:N0}/ea margin" : $"{r.Name}: no worthwhile flip";
+                    Status = r.NetMargin > 0 ? $"{r.Name}: buy on {r.BuyWorld}, ~{r.NetMargin:N0}/ea after tax" : $"{r.Name}: no worthwhile flip";
                 }
                 else Status = "No market data for that item.";
             }
@@ -72,7 +72,7 @@ public sealed class FlipEngine : IDisposable
 
         if (nq is null) return hq;
         if (hq is null) return nq;
-        return hq.Margin > nq.Margin ? hq : nq;
+        return hq.NetMargin > nq.NetMargin ? hq : nq;
     }
 
     private static FlipResult? Build(uint itemId, MarketDataResponse data, string homeWorld, bool hq)
@@ -82,6 +82,13 @@ public sealed class FlipEngine : IDisposable
 
         // Cheapest place to buy anywhere on the DC.
         var cheapest = listings.OrderBy(l => l.PricePerUnit).First();
+
+        // How many units you could grab on that world within 5% of the cheapest price.
+        var cap = cheapest.PricePerUnit * 1.05;
+        long buyAvailable = listings
+            .Where(l => string.Equals(l.WorldName, cheapest.WorldName, StringComparison.OrdinalIgnoreCase)
+                     && l.PricePerUnit <= cap)
+            .Sum(l => l.Quantity);
 
         // Home-world sell signals.
         var homeListings = listings.Where(l => string.Equals(l.WorldName, homeWorld, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -105,6 +112,7 @@ public sealed class FlipEngine : IDisposable
             Hq        = hq,
             BuyWorld  = cheapest.WorldName ?? "?",
             BuyPrice  = cheapest.PricePerUnit,
+            BuyAvailable = buyAvailable,
             HomeWorld = homeWorld,
             HomeGoing = homeGoing,
             HomeFloor = homeFloor,
