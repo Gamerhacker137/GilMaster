@@ -17,7 +17,6 @@ public sealed class MainWindow : Window, IDisposable
 
     // Signals to the tab bar that we want to switch to Gather next frame
     private bool pendingGatherSwitch = false;
-    private bool gatherTabOpen = true;
 
     public MainWindow() : base("GilMaster##main", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -72,11 +71,13 @@ public sealed class MainWindow : Window, IDisposable
         ImGui.Separator();
 
         // ── Tab bar ────────────────────────────────────────────────────
+        // No tab is closeable (no ref-bool overload → no X button) and each tab's
+        // body lives in its own scrolling child so long content never gets cut off.
         if (ImGui.BeginTabBar("##gm-tabs"))
         {
             if (ImGui.BeginTabItem("Find"))
             {
-                findTab.Draw();
+                DrawTabBody("Find", findTab.Draw);
                 ImGui.EndTabItem();
             }
 
@@ -85,34 +86,42 @@ public sealed class MainWindow : Window, IDisposable
                 ? ImGuiTabItemFlags.SetSelected
                 : ImGuiTabItemFlags.None;
 
-            if (ImGui.BeginTabItem("Gather", ref gatherTabOpen, gatherFlags))
+            if (ImGui.BeginTabItem("Gather", gatherFlags))
             {
                 pendingGatherSwitch = false;
-                gatherTabOpen = true; // keep it open (ignore any accidental close)
-                gatherTab.Draw();
+                DrawTabBody("Gather", gatherTab.Draw);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Craft"))
             {
-                craftTab.Draw();
+                DrawTabBody("Craft", craftTab.Draw);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Queue"))
             {
-                queueTab.Draw();
+                DrawTabBody("Queue", queueTab.Draw);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Level"))
             {
-                levelTab.Draw();
+                DrawTabBody("Level", levelTab.Draw);
                 ImGui.EndTabItem();
             }
 
             ImGui.EndTabBar();
         }
+    }
+
+    // Wrap a tab's content in a scrolling child region so it can scroll
+    // independently when the content is taller than the window.
+    private static void DrawTabBody(string id, Action draw)
+    {
+        if (ImGui.BeginChild(id + "##body", new Vector2(0, 0), false))
+            draw();
+        ImGui.EndChild();
     }
 
     public void Dispose()
