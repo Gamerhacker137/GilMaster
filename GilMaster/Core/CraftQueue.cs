@@ -14,6 +14,7 @@ public sealed class CraftQueueEntry
     public string Name            { get; init; } = "";
     public int    JobId           { get; init; }  // ClassJob row ID: 8=CRP..15=CUL
     public string JobName         { get; init; } = "";
+    public int    RecipeLevel     { get; init; }  // crafter level required for this recipe
     public int    AmountResult    { get; init; } = 1;
     public int    QuantityNeeded  { get; init; }
     public int    QuantityInBags  { get; init; }
@@ -133,6 +134,7 @@ public sealed class CraftQueue
                 Name          = GetItemName(itemId),
                 JobId         = ri.JobId,
                 JobName       = ri.JobName,
+                RecipeLevel   = ri.RecipeLevel,
                 AmountResult  = ri.AmountResult,
                 QuantityNeeded = totalNeeded,
                 QuantityInBags = inBags,
@@ -287,7 +289,7 @@ public sealed class CraftQueue
 
     // Player's level in a given crafter class (jobId 8..15). Returns 99 on any failure
     // so a read error never hides craftable items behind the level filter.
-    private static unsafe int GetCrafterLevel(int jobId)
+    public static unsafe int GetCrafterLevel(int jobId)
     {
         try
         {

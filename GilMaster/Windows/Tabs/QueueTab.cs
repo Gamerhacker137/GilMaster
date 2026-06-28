@@ -195,6 +195,12 @@ public sealed class QueueTab
             return;
         }
 
+        // Cache crafter levels for this frame; collect any step you can't craft yet.
+        var levelCache = new Dictionary<int, int>();
+        int LvlFor(int jobId) => levelCache.TryGetValue(jobId, out var v)
+            ? v : (levelCache[jobId] = CraftQueue.GetCrafterLevel(jobId));
+        var levelBlocked = new List<CraftQueueEntry>();
+
         // ── Crafting steps ────────────────────────────────────────────────
         ImGui.TextUnformatted("Crafting steps:");
 
@@ -226,12 +232,23 @@ public sealed class QueueTab
                 else
                     ImGui.TextDisabled("-");
 
-                // Item name
+                // Level check — can the player craft this recipe yet?
+                var crafterLvl   = LvlFor(entry.JobId);
+                bool levelTooLow = crafterLvl < entry.RecipeLevel;
+                if (levelTooLow) levelBlocked.Add(entry);
+
+                // Item name (red if your crafter level is too low)
                 ImGui.TableNextColumn();
-                var nameColor = isDone    ? new Vector4(0.3f, 1f, 0.4f, 1f)  :
-                                isCurrent ? new Vector4(1f, 0.9f, 0.2f, 1f)  :
-                                            new Vector4(1f, 1f, 1f, 1f);
+                var nameColor = levelTooLow ? new Vector4(1f, 0.3f, 0.3f, 1f)  :
+                                isDone       ? new Vector4(0.3f, 1f, 0.4f, 1f)  :
+                                isCurrent    ? new Vector4(1f, 0.9f, 0.2f, 1f)  :
+                                               new Vector4(1f, 1f, 1f, 1f);
                 ImGui.TextColored(nameColor, entry.Name);
+                if (levelTooLow)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(new Vector4(1f, 0.3f, 0.3f, 1f), $"(need Lv {entry.RecipeLevel}, you're {crafterLvl})");
+                }
 
                 // Job
                 ImGui.TableNextColumn();
@@ -263,12 +280,25 @@ public sealed class QueueTab
             ImGui.Unindent();
         }
 
+        // ── Crafter level too low ─────────────────────────────────────────
+        if (levelBlocked.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.3f, 0.3f, 1f), "Crafter level too low:");
+            ImGui.Indent();
+            foreach (var e in levelBlocked)
+                ImGui.TextColored(new Vector4(1f, 0.45f, 0.45f, 1f),
+                    $"{e.Name} — needs {e.JobName} Lv {e.RecipeLevel} (you're {LvlFor(e.JobId)})");
+            ImGui.Unindent();
+            ImGui.TextDisabled("Level that craft up first, or remove this item from the queue.");
+        }
+
         ImGui.Separator();
 
         // ── Controls ──────────────────────────────────────────────────────
         var artisan = Plugin.Artisan;
         var artisanAvail = artisan.IsAvailable;
-        bool canStart = queue.Entries.Count > 0 && queue.Missing.Count == 0;
+        bool canStart = queue.Entries.Count > 0 && queue.Missing.Count == 0 && levelBlocked.Count == 0;
 
         if (isRunning)
         {
@@ -330,6 +360,11 @@ public sealed class QueueTab
             {
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(1f, 0.45f, 0.35f, 1f), "Gather/buy missing materials first.");
+            }
+            else if (levelBlocked.Count > 0)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(1f, 0.3f, 0.3f, 1f), "Crafter level too low (see above).");
             }
 
             if (executor.CurrentState == CraftQueueExecutor.State.Done)
