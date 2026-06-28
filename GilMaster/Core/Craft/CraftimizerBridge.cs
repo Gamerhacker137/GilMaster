@@ -121,6 +121,27 @@ public static class CraftimizerBridge
         return s;
     }
 
+    // A fast solver config for bulk simulation/benchmarking — fewer iterations + a hard
+    // time cap so we can score thousands of recipes in reasonable time.
+    private static readonly SolverConfig FastConfig = SolverConfig.RecipeNoteDefault with
+    {
+        Iterations     = 20_000,
+        MaxThreadCount = 1,        // many small solves in parallel across recipes instead
+        MaxTimeMs      = 1_500,
+    };
+
+    /// <summary>
+    /// Solve a recipe and return the solver's final simulated <see cref="SimulationState"/>
+    /// (progress / quality / HQ%), for offline benchmarking. Uses the fast config.
+    /// </summary>
+    public static SimulationState? SolveStateFast(SimulationInput input, CancellationToken token = default)
+    {
+        var solver = new CSolver(FastConfig, new SimulationState(input)) { Token = token };
+        solver.Start();
+        var solution = solver.GetSafeTask().GetAwaiter().GetResult();
+        return solution is { } s ? s.State : null;
+    }
+
     // ── Action execution mapping ───────────────────────────────────────────────
 
     /// <summary>

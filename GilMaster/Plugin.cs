@@ -22,6 +22,7 @@ public sealed class Plugin : IDalamudPlugin
     public static MateriaExtractor   MateriaExtractor   { get; private set; } = null!;
     public static SellEngine         SellEngine         { get; private set; } = null!;
     public static FlipEngine         FlipEngine         { get; private set; } = null!;
+    public static CraftSimRunner     CraftSim           { get; private set; } = null!;
 
     private readonly WindowSystem windowSystem = new("GilMaster");
     private readonly MainWindow mainWindow;
@@ -50,6 +51,7 @@ public sealed class Plugin : IDalamudPlugin
         MateriaExtractor   = new MateriaExtractor();
         SellEngine         = new SellEngine();
         FlipEngine         = new FlipEngine();
+        CraftSim           = new CraftSimRunner();
 
         // Load last scan from disk so the list isn't empty on startup
         ProfitEngine.TryLoadCache();
@@ -87,6 +89,7 @@ public sealed class Plugin : IDalamudPlugin
         CraftStarter.Dispose();
         SellEngine.Dispose();
         FlipEngine.Dispose();
+        CraftSim.Dispose();
         ProfitEngine.Dispose();
         Config.Save();
     }
