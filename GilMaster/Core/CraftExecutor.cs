@@ -67,7 +67,6 @@ public sealed class CraftExecutor : IDisposable
     private const double PlanGrace = 12.0;
     private bool wasInCraft;
     private uint lastLoggedStep = uint.MaxValue;
-    private uint lastNotUsableStep = uint.MaxValue;
     private bool loggedUnreadable;
     private bool synthActive;
     private DateTime waitingSince = DateTime.MinValue;
@@ -88,6 +87,9 @@ public sealed class CraftExecutor : IDisposable
     private bool _pendingIsLive;
     // Last step we kicked a live re-solve on, so we re-solve once per step (not per frame).
     private uint _lastResolveStep;
+    // Step we last fired an action on — enforces ONE action per craft step (wait for the
+    // game to advance the step before acting again, instead of spamming).
+    private uint _firedStep = uint.MaxValue;
     // Combo/usage state, mutated as we execute planned actions, fed back into re-solves.
     private ActionStates _liveActionStates;
 
@@ -108,12 +110,12 @@ public sealed class CraftExecutor : IDisposable
         planStep         = 0;
         lastActionAt     = DateTime.MinValue;
         lastLoggedStep   = uint.MaxValue;
-        lastNotUsableStep = uint.MaxValue;
         loggedUnreadable = false;
         _planTask        = null;
         _input           = null;
         _pendingIsLive   = false;
         _lastResolveStep = 0;
+        _firedStep       = uint.MaxValue;
         _liveActionStates = default;
         CurrentState     = State.WaitingForSynth;
         StatusText       = $"Open crafting window and start synth (×{quantity})...";
@@ -143,7 +145,6 @@ public sealed class CraftExecutor : IDisposable
             Recommendation  = null;
             idCache         = null;
             lastLoggedStep  = uint.MaxValue;
-            lastNotUsableStep = uint.MaxValue;
             loggedUnreadable = false;
             synthActive     = false;
 
@@ -165,6 +166,8 @@ public sealed class CraftExecutor : IDisposable
                     _planTask       = null;
                     _input          = null;
                     _liveActionStates = default;
+                    _lastResolveStep = 0;
+                    _firedStep      = uint.MaxValue;
                     CraftStarter.synthNodesDumped = false;
                 }
                 OnChanged?.Invoke();
@@ -209,10 +212,11 @@ public sealed class CraftExecutor : IDisposable
                     _planTask       = null;
                     _input          = null;
                     _liveActionStates = default;
+                    _lastResolveStep = 0;
+                    _firedStep      = uint.MaxValue;
                     CraftStarter.synthNodesDumped = false;
                 }
                 lastLoggedStep    = uint.MaxValue;
-                lastNotUsableStep = uint.MaxValue;
                 OnChanged?.Invoke();
             }
 
@@ -272,12 +276,11 @@ public sealed class CraftExecutor : IDisposable
         // reflects the real progress/quality/durability/condition/buffs. The solve runs in
         // the background during the action animation; the freshest plan is adopted at step 0.
         // HQ only — NQ stays on the fast greedy synthesis loop.
-        var craftOngoing  = state.Progress < state.MaxProgress;
-        var planExhausted = plannedRotation != null && planStep >= plannedRotation.Length;
-        var planLost      = plannedRotation == null && state.StepCount > 1;
-        var newStep       = state.StepCount > 1 && state.StepCount != _lastResolveStep;
+        var craftOngoing = state.Progress < state.MaxProgress;
+        var planLost     = plannedRotation == null && state.StepCount > 1;
+        var newStep      = state.StepCount > 1 && state.StepCount != _lastResolveStep;
         if (Plugin.Config.PreferHq && _input != null && _planTask == null
-            && craftOngoing && (planExhausted || planLost || newStep))
+            && craftOngoing && (planLost || newStep))
         {
             _lastResolveStep = state.StepCount;
             StartLiveResolve(state);
@@ -334,32 +337,31 @@ public sealed class CraftExecutor : IDisposable
         var actionType  = act.IsCraftAction ? CSActionType.CraftAction : CSActionType.Action;
         var status      = ActionManager.Instance()->GetActionStatus(actionType, resolvedId);
 
+        // One action per step: if we already fired on this step, wait for the game to
+        // advance to the next step before acting again.
+        if (state.StepCount == _firedStep) return;
+
         if (status == 0)
         {
             var used = ActionManager.Instance()->UseAction(actionType, resolvedId, 0xE0000000UL);
             lastActionAt = DateTime.Now;
-            StatusText   = $"[Step {state.StepCount}] {act.Label}";
-            Service.Log.Information($"[GilMaster] -> {act.Label} (id {resolvedId}); used={used}");
-            OnChanged?.Invoke();
+            if (used)
+            {
+                _firedStep = state.StepCount;
+                StatusText = $"[Step {state.StepCount}] {act.Label}";
+                Service.Log.Information($"[GilMaster] -> {act.Label} (id {resolvedId})");
+                OnChanged?.Invoke();
 
-            // Advance plan step only when we executed a planned action (not a condition
-            // override or greedy). Feed the action into the combo/usage state so any
-            // adaptive re-solve continues from the correct combo (Basic→Standard→Advanced).
-            if (!isOverride && plannedRotation != null && planStep < plannedRotation.Length)
-            {
-                _liveActionStates.MutateState(plannedRotation[planStep].Base());
-                planStep++;
+                // Feed the executed planned action into the combo/usage state so the next
+                // adaptive re-solve continues from the correct combo (Basic→Standard→Advanced).
+                if (!isOverride && plannedRotation != null && planStep < plannedRotation.Length)
+                {
+                    _liveActionStates.MutateState(plannedRotation[planStep].Base());
+                    planStep++;
+                }
             }
         }
-        else
-        {
-            lastActionAt = DateTime.Now - TimeSpan.FromSeconds(StepDelay - 1.0);
-            if (state.StepCount != lastNotUsableStep)
-            {
-                lastNotUsableStep = state.StepCount;
-                Service.Log.Warning($"[GilMaster] {act.Label} (id {resolvedId}) status={status} — retrying");
-            }
-        }
+        // status != 0 → action is busy/not ready this instant; just wait and retry next tick.
     }
 
     // ── Action selection ─────────────────────────────────────────────────────
@@ -374,26 +376,18 @@ public sealed class CraftExecutor : IDisposable
             return cond;
         }
 
-        // Follow planned rotation
+        // Follow the planned rotation — return the next planned action as-is. Do NOT skip
+        // it just because it isn't usable this instant: mid-animation the game reports the
+        // action as busy (status 579/571), which is normal — the fire loop simply waits and
+        // retries until it's usable, then fires it. (Skipping here caused the plan to burn
+        // through during one animation window and thrash.)
         if (plannedRotation != null && planStep < plannedRotation.Length)
         {
-            var action = plannedRotation[planStep];
-            var def    = ActionTypeToDef(action);
-            // Check the action is usable right now (might not be on first frame)
-            var rid    = ResolveId(def.BaseId, def.IsCraftAction);
-            var at     = def.IsCraftAction ? CSActionType.CraftAction : CSActionType.Action;
-            var status = ActionManager.Instance()->GetActionStatus(at, rid);
-            if (status == 0 || status == 571 /* GCD */)
-            {
-                isOverride = false;
-                return def;
-            }
-            // Plan step unusable — skip it
-            Service.Log.Warning($"[GilMaster] plan[{planStep}] {action} not usable (status {status}), skipping");
-            planStep++;
+            isOverride = false;
+            return ActionTypeToDef(plannedRotation[planStep]);
         }
 
-        // Greedy fallback
+        // Greedy fallback (only when there's no plan at all)
         isOverride = true;
         return DecideAction(state, buffs);
     }
