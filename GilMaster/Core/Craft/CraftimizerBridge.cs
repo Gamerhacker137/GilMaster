@@ -74,10 +74,17 @@ public static class CraftimizerBridge
     /// Task). Returns the full, combo-expanded rotation, or an empty list on failure.
     /// </summary>
     public static List<ActionType> Solve(SimulationInput input, CancellationToken token = default)
-    {
-        var state = new SimulationState(input);
+        => SolveFrom(new SimulationState(input), token);
 
-        // Craftimizer's macro-generation default (StepwiseGenetic, 100k iters, target HQ),
+    /// <summary>
+    /// Run the solver from an arbitrary <see cref="SimulationState"/> — including a live
+    /// mid-craft state — and return the combo-expanded best continuation. This is what
+    /// lets the executor re-solve adaptively from the real progress/quality/durability/
+    /// condition/buffs instead of following a rotation planned blindly at step 1.
+    /// </summary>
+    public static List<ActionType> SolveFrom(SimulationState state, CancellationToken token = default)
+    {
+        // Craftimizer's macro-generation default (StepwiseGenetic, target HQ),
         // with a capped thread count so the solve doesn't starve the game thread.
         var config = SolverConfig.RecipeNoteDefault with
         {
@@ -89,6 +96,29 @@ public static class CraftimizerBridge
         var solution = solver.GetSafeTask().GetAwaiter().GetResult();
         // GetTask returns the SanitizedSolution, so Actions is already combo-expanded.
         return solution is { } s ? s.Actions.ToList() : new List<ActionType>();
+    }
+
+    /// <summary>
+    /// Assemble a live <see cref="SimulationState"/> from the values GilMaster reads off
+    /// the synthesis window + the player's status list, so the solver can continue from
+    /// exactly where the craft is now.
+    /// </summary>
+    public static SimulationState BuildLiveState(
+        SimulationInput input, int progress, int quality, int durability, int cp,
+        Craftimizer.Simulator.Condition condition, Effects effects, ActionStates actionStates, int stepCount)
+    {
+        var s = new SimulationState(input)
+        {
+            Progress      = progress,
+            Quality       = quality,
+            Durability    = durability,
+            CP            = cp,
+            Condition     = condition,
+            ActiveEffects = effects,
+            ActionStates  = actionStates,
+            StepCount     = stepCount,
+        };
+        return s;
     }
 
     // ── Action execution mapping ───────────────────────────────────────────────

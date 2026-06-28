@@ -3,6 +3,8 @@ using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI;
+using Craftimizer.Simulator;
+using Craftimizer.Simulator.Actions;
 using GilMaster.Core.Craft;
 using Lumina.Excel.Sheets;
 using System;
@@ -11,6 +13,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using CSActionType = FFXIVClientStructs.FFXIV.Client.Game.ActionType;
 using CAction = Craftimizer.Simulator.Actions.ActionType;
+using CCondition = Craftimizer.Simulator.Condition;
 
 namespace GilMaster.Core;
 
@@ -79,6 +82,12 @@ public sealed class CraftExecutor : IDisposable
     // Background solver task — launched on step 1, polled each tick until complete
     private Task<List<CAction>>? _planTask;
     private DateTime _planStartedAt;
+    // Cached solver input for the current craft, so adaptive re-solves reuse it.
+    private SimulationInput? _input;
+    // True when the in-flight solve started from the LIVE mid-craft state (adopt at step 0).
+    private bool _pendingIsLive;
+    // Combo/usage state, mutated as we execute planned actions, fed back into re-solves.
+    private ActionStates _liveActionStates;
 
     public State CurrentState { get; private set; } = State.Idle;
     public string StatusText { get; private set; } = "Idle";
@@ -100,6 +109,9 @@ public sealed class CraftExecutor : IDisposable
         lastNotUsableStep = uint.MaxValue;
         loggedUnreadable = false;
         _planTask        = null;
+        _input           = null;
+        _pendingIsLive   = false;
+        _liveActionStates = default;
         CurrentState     = State.WaitingForSynth;
         StatusText       = $"Open crafting window and start synth (×{quantity})...";
         Service.Log.Information($"[GilMaster] Auto-craft armed for {quantity} craft(s), recipeId={recipeId}.");
@@ -148,6 +160,8 @@ public sealed class CraftExecutor : IDisposable
                     plannedRotation = null;
                     planStep        = 0;
                     _planTask       = null;
+                    _input          = null;
+                    _liveActionStates = default;
                     CraftStarter.synthNodesDumped = false;
                 }
                 OnChanged?.Invoke();
@@ -190,6 +204,8 @@ public sealed class CraftExecutor : IDisposable
                     plannedRotation = null;
                     planStep        = 0;
                     _planTask       = null;
+                    _input          = null;
+                    _liveActionStates = default;
                     CraftStarter.synthNodesDumped = false;
                 }
                 lastLoggedStep    = uint.MaxValue;
@@ -221,14 +237,19 @@ public sealed class CraftExecutor : IDisposable
         // step-1 assumptions no longer match the craft — discard it and stay greedy.
         if (_planTask is { IsCompleted: true })
         {
-            var plan  = _planTask.Status == TaskStatus.RanToCompletion ? _planTask.Result : null;
-            _planTask = null;
-            if (plan?.Count > 0 && state.StepCount == 1)
+            var plan    = _planTask.Status == TaskStatus.RanToCompletion ? _planTask.Result : null;
+            var wasLive = _pendingIsLive;
+            _planTask      = null;
+            _pendingIsLive = false;
+            // Initial plans assume a fresh craft, so only adopt at step 1. Adaptive
+            // re-solves are computed FROM the current state, so adopt them immediately.
+            if (plan?.Count > 0 && (wasLive || state.StepCount == 1))
             {
                 plannedRotation = [.. plan];
                 planStep        = 0;
                 Service.Log.Information(
-                    $"[GilMaster] Craftimizer plan ready ({plannedRotation.Length} steps): " +
+                    $"[GilMaster] {(wasLive ? "Adaptive re-solve" : "Craftimizer plan")} ready " +
+                    $"({plannedRotation.Length} steps): " +
                     string.Join(" → ", plannedRotation.Select(s => s.ToString())));
             }
             else if (plan?.Count > 0)
@@ -241,6 +262,18 @@ public sealed class CraftExecutor : IDisposable
                 Service.Log.Warning("[GilMaster] Solver returned no plan — using greedy fallback.");
             }
             OnChanged?.Invoke();
+        }
+
+        // Adaptive re-solve: when the planned rotation is exhausted (or was lost) but the
+        // craft isn't finished, solve again FROM THE LIVE STATE instead of greedy-finishing.
+        // HQ only — NQ stays on the fast greedy synthesis loop.
+        var craftOngoing = state.Progress < state.MaxProgress;
+        var planExhausted = plannedRotation != null && planStep >= plannedRotation.Length;
+        var planLost      = plannedRotation == null && state.StepCount > 1;
+        if (Plugin.Config.PreferHq && _input != null && _planTask == null
+            && craftOngoing && (planExhausted || planLost))
+        {
+            StartLiveResolve(state);
         }
 
         // Launch the solver on step 1. If we don't have a recipe ID (manual crafting),
@@ -302,9 +335,14 @@ public sealed class CraftExecutor : IDisposable
             Service.Log.Information($"[GilMaster] -> {act.Label} (id {resolvedId}); used={used}");
             OnChanged?.Invoke();
 
-            // Advance plan step only when we executed a planned action (not a condition override or greedy)
-            if (!isOverride && plannedRotation != null)
+            // Advance plan step only when we executed a planned action (not a condition
+            // override or greedy). Feed the action into the combo/usage state so any
+            // adaptive re-solve continues from the correct combo (Basic→Standard→Advanced).
+            if (!isOverride && plannedRotation != null && planStep < plannedRotation.Length)
+            {
+                _liveActionStates.MutateState(plannedRotation[planStep].Base());
                 planStep++;
+            }
         }
         else
         {
@@ -398,11 +436,79 @@ public sealed class CraftExecutor : IDisposable
             return;
         }
 
+        _input         = input;
+        _pendingIsLive = false;
         _planStartedAt = DateTime.Now;
         _planTask = Task.Run(() => CraftimizerBridge.Solve(input));
         Service.Log.Information(
             $"[GilMaster] Craftimizer solve started for recipe {currentRecipeId} " +
             $"(cms={craftsmanship} ctrl={control} cp={cp} lv={level})");
+    }
+
+    // Kick a background solve from the LIVE mid-craft state so the next plan reflects the
+    // real progress/quality/durability/condition/buffs (adaptive, like Artisan).
+    private void StartLiveResolve(SynthState st)
+    {
+        if (_input is not { } input) return;
+
+        var effects = ReadEffectsStruct();
+        var cond    = MapCondition(st.Condition);
+        var cp      = (int)(Service.Objects.LocalPlayer?.CurrentCp ?? 0);
+
+        var live = CraftimizerBridge.BuildLiveState(
+            input, (int)st.Progress, (int)st.Quality, (int)st.Durability, cp,
+            cond, effects, _liveActionStates, (int)st.StepCount);
+
+        _pendingIsLive = true;
+        _planTask = Task.Run(() => CraftimizerBridge.SolveFrom(live));
+        Service.Log.Information(
+            $"[GilMaster] Adaptive re-solve from live state: prog={st.Progress}/{st.MaxProgress} " +
+            $"qual={st.Quality}/{st.MaxQuality} dur={st.Durability} cp={cp} cond={st.Condition} " +
+            $"iq={effects.InnerQuiet} ven={effects.Veneration} inn={effects.Innovation} " +
+            $"gs={effects.GreatStrides} wn={effects.WasteNot}/{effects.WasteNot2} " +
+            $"manip={effects.Manipulation} mm={effects.MuscleMemory}");
+    }
+
+    // Map GilMaster's synth-condition readout to Craftimizer's Condition enum (same order).
+    private static CCondition MapCondition(SynthCondition c) => c switch
+    {
+        SynthCondition.Good      => CCondition.Good,
+        SynthCondition.Excellent => CCondition.Excellent,
+        SynthCondition.Poor      => CCondition.Poor,
+        SynthCondition.Centered  => CCondition.Centered,
+        SynthCondition.Sturdy    => CCondition.Sturdy,
+        SynthCondition.Pliant    => CCondition.Pliant,
+        SynthCondition.Malleable => CCondition.Malleable,
+        SynthCondition.Primed    => CCondition.Primed,
+        SynthCondition.GoodOmen  => CCondition.GoodOmen,
+        _                        => CCondition.Normal,
+    };
+
+    // Read live crafting buffs into Craftimizer's Effects struct. Durations are in steps
+    // (the synth buff counter); Inner Quiet is a stack count. Status IDs are the standard
+    // crafting-buff ids. Logged each re-solve so the mapping can be verified in-game.
+    private static Effects ReadEffectsStruct()
+    {
+        var fx = new Effects();
+        var player = Service.Objects.LocalPlayer;
+        if (player == null) return fx;
+        foreach (var s in player.StatusList)
+        {
+            var dur = (byte)Math.Clamp((int)Math.Round(s.RemainingTime), 0, 255);
+            switch (s.StatusId)
+            {
+                case 251:  fx.InnerQuiet     = (byte)Math.Clamp((int)s.Param, 0, 10); break; // stacks
+                case 252:  fx.WasteNot       = dur; break;
+                case 257:  fx.WasteNot2      = dur; break;
+                case 2226: fx.Veneration     = dur; break;
+                case 2189: fx.Innovation     = dur; break;
+                case 254:  fx.GreatStrides   = dur; break;
+                case 2191: fx.MuscleMemory   = dur; break;
+                case 1164: fx.Manipulation   = dur; break;
+                case 2190: fx.FinalAppraisal = dur; break;
+            }
+        }
+        return fx;
     }
 
     private static unsafe (int Craftsmanship, int Control, int CP, int Level)? ReadCrafterStats()
