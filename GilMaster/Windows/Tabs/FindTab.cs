@@ -395,6 +395,23 @@ public sealed class FindTab
         if (ImGui.MenuItem("Copy name"))
             ImGui.SetClipboardText(item.Name);
 
+        // Add to a crafting list (or start a new one).
+        if (ImGui.BeginMenu("Add to list"))
+        {
+            var lists = Plugin.Config.CraftLists;
+            for (var i = 0; i < lists.Count; i++)
+                if (ImGui.MenuItem($"{lists[i].Name}##addlist{i}"))
+                    ListsTab.AddItemToList(i, item.ItemId, item.Name);
+
+            if (lists.Count > 0) ImGui.Separator();
+            if (ImGui.MenuItem("+ New list"))
+            {
+                lists.Add(new CraftList { Name = $"List {lists.Count + 1}" });
+                ListsTab.AddItemToList(lists.Count - 1, item.ItemId, item.Name);
+            }
+            ImGui.EndMenu();
+        }
+
         ImGui.Separator();
         if (ImGui.MenuItem("Open on Universalis"))
             Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{item.ItemId}");

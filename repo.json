@@ -3,7 +3,7 @@
     "Author": "Gamerhacker137",
     "Name": "GilMaster",
     "InternalName": "GilMaster",
-    "AssemblyVersion": "1.0.20.0",
+    "AssemblyVersion": "1.0.21.0",
     "Punchline": "Find, gather, and craft the most profitable items on your server.",
     "Description": "Scans Universalis for high-demand crafted items matching your level, showing realistic prices, honest net profit, and seller competition. Drives GatherBuddy to gather the materials and Artisan to craft them, and reads your retainer/alt stash via Allagan Tools (all optional, when installed). Also includes a DoH/DoL leveling advisor. Use /gilmaster to open.",
     "Tags": ["market", "craft", "gather", "profit", "leveling"],

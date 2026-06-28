@@ -1,12 +1,33 @@
 using Dalamud.Configuration;
 using System;
+using System.Collections.Generic;
 
 namespace GilMaster;
+
+/// <summary>One item entry in a saved crafting list (idea borrowed from Artisan's lists).</summary>
+[Serializable]
+public sealed class CraftListItem
+{
+    public uint   ItemId   { get; set; }
+    public string Name     { get; set; } = "";
+    public int    Quantity { get; set; } = 1;
+}
+
+/// <summary>A named, persisted batch of items to craft in one go.</summary>
+[Serializable]
+public sealed class CraftList
+{
+    public string Name { get; set; } = "New List";
+    public List<CraftListItem> Items { get; set; } = [];
+}
 
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
+
+    // Saved crafting lists (Lists tab)
+    public List<CraftList> CraftLists { get; set; } = [];
 
     // Find tab
     public int SelectedCraftJob { get; set; } = 0;

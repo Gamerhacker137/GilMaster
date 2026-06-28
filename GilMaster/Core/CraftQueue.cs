@@ -63,6 +63,12 @@ public sealed class CraftQueue
     //
     // Result: Entries ordered leaves-first (sub-components before final item).
     public void Build(uint targetItemId, int quantity)
+        => BuildMulti([(targetItemId, quantity)]);
+
+    // Build a single combined queue for several target items at once (crafting lists).
+    // Shared sub-ingredients are accumulated across every target before craft counts
+    // are decided, so the queue crafts each intermediate exactly once.
+    public void BuildMulti(IReadOnlyList<(uint ItemId, int Quantity)> targets)
     {
         Entries.Clear();
         Missing.Clear();
@@ -72,11 +78,16 @@ public sealed class CraftQueue
         // we need and accumulate into `needed`.  Parents are always processed
         // before children in BFS, so a child's total requirement is complete
         // by the time we dequeue it.
-        var needed   = new Dictionary<uint, int> { [targetItemId] = quantity };
+        var needed   = new Dictionary<uint, int>();
         var bfsOrder = new List<uint>();
         var bfsQueue = new Queue<uint>();
-        var seen     = new HashSet<uint> { targetItemId };
-        bfsQueue.Enqueue(targetItemId);
+        var seen     = new HashSet<uint>();
+        foreach (var (itemId, quantity) in targets)
+        {
+            if (itemId == 0 || quantity <= 0) continue;
+            needed[itemId] = needed.GetValueOrDefault(itemId) + quantity;
+            if (seen.Add(itemId)) bfsQueue.Enqueue(itemId);
+        }
 
         while (bfsQueue.Count > 0)
         {
@@ -316,6 +327,35 @@ public sealed class CraftQueue
     {
         var item = Service.DataManager.GetExcelSheet<Item>().GetRowOrDefault(itemId);
         return item?.Name.ExtractText() ?? $"Item#{itemId}";
+    }
+
+    // ── Shared craftable-item name search (used by Queue + Lists tabs) ─────
+    private static Dictionary<uint, string>? _craftableNames;
+
+    public static List<(uint Id, string Name)> SearchCraftable(string query, int max = 20)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return [];
+        _craftableNames ??= BuildCraftableNames();
+        return _craftableNames
+            .Where(kv => kv.Value.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(kv => kv.Value.Length)
+            .ThenBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase)
+            .Take(max)
+            .Select(kv => (kv.Key, kv.Value))
+            .ToList();
+    }
+
+    private static Dictionary<uint, string> BuildCraftableNames()
+    {
+        var dict  = new Dictionary<uint, string>();
+        foreach (var recipe in Service.DataManager.GetExcelSheet<Recipe>())
+        {
+            var id = recipe.ItemResult.RowId;
+            if (id == 0 || dict.ContainsKey(id)) continue;
+            var name = recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? "";
+            if (!string.IsNullOrEmpty(name)) dict[id] = name;
+        }
+        return dict;
     }
 
     // ── Recipe index — built once per session ─────────────────────────────

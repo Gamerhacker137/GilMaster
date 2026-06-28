@@ -13,10 +13,12 @@ public sealed class MainWindow : Window, IDisposable
     private readonly GatherTab gatherTab = new();
     private readonly CraftTab craftTab = new();
     private readonly QueueTab queueTab = new();
+    private readonly ListsTab listsTab = new();
     private readonly LevelTab levelTab = new();
 
-    // Signals to the tab bar that we want to switch to Gather next frame
+    // Signals to the tab bar that we want to switch to Gather / Queue next frame
     private bool pendingGatherSwitch = false;
+    private bool pendingQueueSwitch = false;
 
     public MainWindow() : base("GilMaster##main", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -37,6 +39,12 @@ public sealed class MainWindow : Window, IDisposable
     public static void SwitchToGather(ProfitableItem item)
     {
         ActiveInstance?.HandleItemSelected(item);
+    }
+
+    // Called from ListsTab after building a multi-item queue
+    public static void SwitchToQueue()
+    {
+        if (ActiveInstance != null) ActiveInstance.pendingQueueSwitch = true;
     }
 
     private static MainWindow? ActiveInstance;
@@ -99,8 +107,18 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Queue"))
+            if (ImGui.BeginTabItem("Lists"))
             {
+                DrawTabBody("Lists", listsTab.Draw);
+                ImGui.EndTabItem();
+            }
+
+            var queueFlags = pendingQueueSwitch
+                ? ImGuiTabItemFlags.SetSelected
+                : ImGuiTabItemFlags.None;
+            if (ImGui.BeginTabItem("Queue", queueFlags))
+            {
+                pendingQueueSwitch = false;
                 DrawTabBody("Queue", queueTab.Draw);
                 ImGui.EndTabItem();
             }
