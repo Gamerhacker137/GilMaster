@@ -33,12 +33,10 @@ public sealed class SellTab
                 engine.Scan(target);
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Price every marketable item in your inventory (main bags + saddlebag)\nand show what it's worth and the price to list at.");
+            ImGui.SetTooltip("Price every marketable item in your inventory (main bags + saddlebag)\nagainst your home world — where you actually list — and show the price to list at.");
 
         ImGui.SameLine();
-        var dc = config.ScanDatacenter;
-        if (ImGui.Checkbox("DC##sell-dc", ref dc)) { config.ScanDatacenter = dc; config.Save(); }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Price against the whole datacenter instead of your home world.");
+        ImGui.TextDisabled($"Listing on {(string.IsNullOrEmpty(target) ? "?" : target)}");
 
         if (engine.IsScanning)
         {
@@ -191,14 +189,13 @@ public sealed class SellTab
         catch { ImGui.Dummy(new Vector2(size, size)); }
     }
 
+    // You can only list on your HOME world, so the Sell tab always prices there
+    // (even if you're currently visiting another world).
     private static string GetTarget(Configuration config)
     {
         if (Service.PlayerState.ContentId == 0) return string.Empty;
-        if (config.ScanDatacenter)
-        {
-            var dc = Service.PlayerState.CurrentWorld.Value.DataCenter.Value.Name.ExtractText();
-            return string.IsNullOrEmpty(dc) ? string.Empty : dc;
-        }
+        var home = Service.Objects.LocalPlayer?.HomeWorld.Value.Name.ExtractText();
+        if (!string.IsNullOrEmpty(home)) return home;
         return Service.PlayerState.CurrentWorld.Value.Name.ExtractText();
     }
 

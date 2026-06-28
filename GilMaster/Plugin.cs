@@ -21,6 +21,7 @@ public sealed class Plugin : IDalamudPlugin
     public static AllaganToolsBridge AllaganTools       { get; private set; } = null!;
     public static MateriaExtractor   MateriaExtractor   { get; private set; } = null!;
     public static SellEngine         SellEngine         { get; private set; } = null!;
+    public static FlipEngine         FlipEngine         { get; private set; } = null!;
 
     private readonly WindowSystem windowSystem = new("GilMaster");
     private readonly MainWindow mainWindow;
@@ -47,6 +48,7 @@ public sealed class Plugin : IDalamudPlugin
         AllaganTools       = new AllaganToolsBridge();
         MateriaExtractor   = new MateriaExtractor();
         SellEngine         = new SellEngine();
+        FlipEngine         = new FlipEngine();
 
         // Load last scan from disk so the list isn't empty on startup
         ProfitEngine.TryLoadCache();
@@ -79,6 +81,7 @@ public sealed class Plugin : IDalamudPlugin
         CraftExecutor.Dispose();
         CraftStarter.Dispose();
         SellEngine.Dispose();
+        FlipEngine.Dispose();
         ProfitEngine.Dispose();
         Config.Save();
     }

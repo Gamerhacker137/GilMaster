@@ -15,6 +15,7 @@ public sealed class MainWindow : Window, IDisposable
     private readonly QueueTab queueTab = new();
     private readonly ListsTab listsTab = new();
     private readonly SellTab sellTab = new();
+    private readonly FlipTab flipTab = new();
     private readonly LevelTab levelTab = new();
 
     // Signals to the tab bar that we want to switch to Gather / Queue next frame
@@ -127,6 +128,12 @@ public sealed class MainWindow : Window, IDisposable
             if (ImGui.BeginTabItem("Sell"))
             {
                 DrawTabBody("Sell", sellTab.Draw);
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Flip"))
+            {
+                DrawTabBody("Flip", flipTab.Draw);
                 ImGui.EndTabItem();
             }
 
