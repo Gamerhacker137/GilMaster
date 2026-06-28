@@ -135,6 +135,7 @@ public sealed class ProfitEngine : IDisposable
                 {
                     ItemId = itemId,
                     RecipeId = recipeId,
+                    IconId = item?.Icon ?? 0,
                     Name = item?.Name.ExtractText() ?? $"Item#{itemId}",
                     RecipeLevel = level,
                     CraftJobId = cjId,
@@ -149,6 +150,8 @@ public sealed class ProfitEngine : IDisposable
                     RecentUnitsSold = data.RecentUnitsSold,
                     EstimatedMaterialCost = 0,
                     HasActiveListings = data.UnitsForSale > 0,
+                    ActiveListings = data.Listings.Count,
+                    UnitsForSale = data.UnitsForSale,
                 });
             }
 
@@ -233,8 +236,8 @@ public sealed class ProfitEngine : IDisposable
 
             var recipeSheet = Service.DataManager.GetExcelSheet<Recipe>();
 
-            // (recipeId, itemId, level, amountResult, craftJobId, name, startsWith)
-            var matches = new List<(uint recipeId, uint itemId, int level, int amountResult, int craftJobId, string name, bool startsWith)>();
+            // (recipeId, itemId, icon, level, amountResult, craftJobId, name, startsWith)
+            var matches = new List<(uint recipeId, uint itemId, ushort icon, int level, int amountResult, int craftJobId, string name, bool startsWith)>();
             foreach (var recipe in recipeSheet)
             {
                 ct.ThrowIfCancellationRequested();
@@ -249,6 +252,7 @@ public sealed class ProfitEngine : IDisposable
                 matches.Add((
                     recipe.RowId,
                     recipe.ItemResult.RowId,
+                    item.Value.Icon,
                     (int)recipe.RecipeLevelTable.Value.ClassJobLevel,
                     Math.Max(1, (int)recipe.AmountResult),
                     (int)recipe.CraftType.RowId,
@@ -290,6 +294,7 @@ public sealed class ProfitEngine : IDisposable
                 {
                     ItemId = m.itemId,
                     RecipeId = m.recipeId,
+                    IconId = m.icon,
                     Name = m.name,
                     RecipeLevel = m.level,
                     CraftJobId = m.craftJobId,
@@ -304,6 +309,8 @@ public sealed class ProfitEngine : IDisposable
                     RecentUnitsSold = data?.RecentUnitsSold ?? 0,
                     EstimatedMaterialCost = 0,
                     HasActiveListings = (data?.UnitsForSale ?? 0) > 0,
+                    ActiveListings = data?.Listings.Count ?? 0,
+                    UnitsForSale = data?.UnitsForSale ?? 0,
                 });
             }
 

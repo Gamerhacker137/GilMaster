@@ -4,6 +4,7 @@ public sealed class ProfitableItem
 {
     public uint ItemId { get; init; }
     public uint RecipeId { get; init; }
+    public ushort IconId { get; init; }
     public string Name { get; init; } = string.Empty;
     public int RecipeLevel { get; init; }
     public int CraftJobId { get; init; }
@@ -54,4 +55,17 @@ public sealed class ProfitableItem
     private double BestVelocity => SaleVelocityHq > 0 ? SaleVelocityHq : SaleVelocity;
 
     public bool HasActiveListings { get; init; }
+
+    // ── Competition signal ────────────────────────────────────────────────
+    // Number of separate listings currently undercutting each other on the board.
+    // Few sellers on a high-value item = easy money; a crowded board = a price war.
+    public int  ActiveListings { get; init; }
+    public long UnitsForSale   { get; init; }
+
+    // 0 = wide open, 1 = light, 2 = busy, 3 = saturated. Used for colour-coding.
+    public int CompetitionTier =>
+        ActiveListings <= 0  ? 0 :
+        ActiveListings <= 4  ? 1 :
+        ActiveListings <= 12 ? 2 :
+                               3;
 }

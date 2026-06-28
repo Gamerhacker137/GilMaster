@@ -266,8 +266,13 @@ public sealed class QueueTab
         ImGui.Separator();
 
         // ── Controls ──────────────────────────────────────────────────────
+        var artisan = Plugin.Artisan;
+        var artisanAvail = artisan.IsAvailable;
+        bool canStart = queue.Entries.Count > 0 && queue.Missing.Count == 0;
+
         if (isRunning)
         {
+            // Built-in executor is running.
             ImGui.TextColored(new Vector4(1f, 0.85f, 0.2f, 1f), "Running:");
             ImGui.SameLine();
             ImGui.TextUnformatted(executor.StatusText);
@@ -275,13 +280,51 @@ public sealed class QueueTab
             if (ImGui.SmallButton("Stop##qstop"))
                 executor.Stop();
         }
+        else if (artisanAvail && artisan.IsActive)
+        {
+            // Artisan is crafting our hand-off.
+            ImGui.TextColored(new Vector4(0.3f, 1f, 0.4f, 1f), "Artisan crafting…");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Stop##artisanstop"))
+                artisan.Stop();
+        }
         else
         {
-            bool canStart = queue.Entries.Count > 0 && queue.Missing.Count == 0;
-            if (!canStart) ImGui.BeginDisabled();
-            if (ImGui.Button("Start Queue"))
-                executor.Start(new List<CraftQueueEntry>(queue.Entries));
-            if (!canStart) ImGui.EndDisabled();
+            if (artisanAvail)
+            {
+                // Preferred path: drive Artisan (battle-tested solver + executor).
+                if (!canStart) ImGui.BeginDisabled();
+                if (ImGui.Button("Craft with Artisan"))
+                {
+                    var n = artisan.CraftAll(queue.Entries);
+                    if (n > 0)
+                        Service.ToastGui.ShowNormal($"Sent {n} craft step{(n == 1 ? "" : "s")} to Artisan.");
+                    else
+                        Service.ToastGui.ShowError("Couldn't reach Artisan — try the built-in crafter.");
+                }
+                if (!canStart) ImGui.EndDisabled();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Hand the whole queue to Artisan (recommended).\nSub-components are crafted before the items that need them.");
+
+                ImGui.SameLine();
+                ImGui.TextDisabled("|");
+                ImGui.SameLine();
+                if (!canStart) ImGui.BeginDisabled();
+                if (ImGui.SmallButton("Built-in##start"))
+                    executor.Start(new List<CraftQueueEntry>(queue.Entries));
+                if (!canStart) ImGui.EndDisabled();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Use GilMaster's own crafter instead of Artisan.");
+            }
+            else
+            {
+                if (!canStart) ImGui.BeginDisabled();
+                if (ImGui.Button("Start Queue"))
+                    executor.Start(new List<CraftQueueEntry>(queue.Entries));
+                if (!canStart) ImGui.EndDisabled();
+                ImGui.SameLine();
+                ImGui.TextDisabled("Tip: install Artisan for more reliable automated crafting.");
+            }
 
             if (queue.Missing.Count > 0)
             {

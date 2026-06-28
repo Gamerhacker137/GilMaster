@@ -1,4 +1,5 @@
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Textures;
 using GilMaster.Core;
 using GilMaster.Models;
 using System;
@@ -15,14 +16,15 @@ public sealed class FindTab
 
     private static readonly string[] JobNames = CraftJobNames.FullNames;
 
-    // Columns: Item, Lvl, NQ sale price, HQ sale price, Sales/day, Gil/day (demand×price), Gil/hr
-    private static readonly string[] ColNames = ["Item", "Lvl", "NQ Sells", "HQ Sells", "Sales/day", "Gil/day", "Gil/hr"];
+    // Columns: Item, Lvl, NQ sale price, HQ sale price, Sales/day, Gil/day (demand×price), Gil/hr, Sellers (competition)
+    private static readonly string[] ColNames = ["Item", "Lvl", "NQ Sells", "HQ Sells", "Sales/day", "Gil/day", "Gil/hr", "Sellers"];
 
     // Quick-sort dropdown options → the column index each maps to.
     private static readonly (string Label, int Col)[] SortOptions =
     [
         ("Income / day", 5),
         ("Income / hr",  6),
+        ("Competition",  7),
         ("Level",        1),
         ("Sales / day",  4),
         ("NQ price",     2),
@@ -213,10 +215,17 @@ public sealed class FindTab
         if (inSearchMode)
             ImGui.TextDisabled("Showing search results. Click an item to plan it, then craft from the Craft tab.");
 
-        // NQ/HQ mode toggle hint
+        // NQ/HQ mode toggle hint + competition legend
         ImGui.TextDisabled("Tip: check \"Prefer HQ\" in the Craft tab to see HQ-optimized profit. Gil/hr assumes NQ unless HQ price is shown.");
+        ImGui.TextDisabled("Sellers = listings on the board:");
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(0.3f, 1f, 0.4f, 1f), "few = open");
+        ImGui.SameLine();
+        ImGui.TextDisabled("·");
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(1f, 0.45f, 0.35f, 1f), "many = price war");
 
-        if (ImGui.BeginTable("##results", 7,
+        if (ImGui.BeginTable("##results", 8,
             ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg |
             ImGuiTableFlags.ScrollY | ImGuiTableFlags.SizingStretchProp,
             new Vector2(0, -1)))
@@ -229,6 +238,7 @@ public sealed class FindTab
             ImGui.TableSetupColumn("Sales/day",ImGuiTableColumnFlags.WidthFixed, 72);
             ImGui.TableSetupColumn("Gil/day",  ImGuiTableColumnFlags.WidthFixed, 72);
             ImGui.TableSetupColumn("Gil/hr",   ImGuiTableColumnFlags.WidthFixed, 72);
+            ImGui.TableSetupColumn("Sellers",  ImGuiTableColumnFlags.WidthFixed, 58);
 
             // Clickable sort headers
             ImGui.TableNextRow(ImGuiTableRowFlags.Headers);
@@ -254,6 +264,9 @@ public sealed class FindTab
                 ImGui.TableNextRow();
                 ImGui.TableSetColumnIndex(0);
 
+                DrawItemIcon(item.IconId);
+                ImGui.SameLine();
+
                 var isSelected = selected?.ItemId == item.ItemId;
                 if (ImGui.Selectable(item.Name, isSelected,
                     ImGuiSelectableFlags.SpanAllColumns, new Vector2(0, 0)))
@@ -267,7 +280,9 @@ public sealed class FindTab
                         + (item.AmountResult > 1 ? $" · yields {item.AmountResult}×" : "")
                         + $"\nFloor (cheapest listing): NQ {item.MinListingPrice:N0}"
                         + (item.MinListingHqPrice > 0 ? $" / HQ {item.MinListingHqPrice:N0}" : "")
-                        + $"\n~{item.RecentUnitsSold} sold recently");
+                        + $"\n~{item.RecentUnitsSold} sold recently"
+                        + $"\n{item.ActiveListings} listing(s) up · {item.UnitsForSale} units for sale"
+                        + $"\n{CompetitionLabel(item.CompetitionTier)}");
 
                 ImGui.TableSetColumnIndex(1);
                 ImGui.Text(item.RecipeLevel.ToString());
@@ -311,6 +326,17 @@ public sealed class FindTab
                     ImGui.SameLine();
                     ImGui.TextColored(new Vector4(0.4f, 0.9f, 1f, 1f), $"/{hqGph / 1000:F0}k");
                 }
+
+                // Sellers — competition on the board. Fewer = easier to sell into.
+                ImGui.TableSetColumnIndex(7);
+                var compColor = item.CompetitionTier switch
+                {
+                    0 => new Vector4(0.5f, 0.5f, 0.5f, 1f),   // no listings / unknown
+                    1 => new Vector4(0.3f, 1f, 0.4f, 1f),     // wide open
+                    2 => new Vector4(1f, 0.9f, 0.3f, 1f),     // busy
+                    _ => new Vector4(1f, 0.45f, 0.35f, 1f),   // saturated
+                };
+                ImGui.TextColored(compColor, item.ActiveListings > 0 ? item.ActiveListings.ToString() : "—");
             }
 
             ImGui.EndTable();
@@ -334,11 +360,41 @@ public sealed class FindTab
             3 => items.OrderBy(i => i.DisplayHqPrice),
             4 => items.OrderBy(i => i.SaleVelocity),
             6 => items.OrderBy(i => i.GetGilPerHour(false)), // col 6 = NQ gil/hr
+            7 => items.OrderBy(i => i.ActiveListings),        // col 7 = competition (fewest first)
             _ => items.OrderBy(i => i.RevenuePerDay),         // col 5 = Gil/day (demand × price)
         };
         if (config.SortDescending) ordered = ordered.Reverse();
         return [.. ordered];
     }
+
+    // Draw the game item icon at text-line height. Falls back to blank space so
+    // the column stays aligned if the icon is missing or can't be loaded.
+    private static void DrawItemIcon(ushort iconId)
+    {
+        var size = ImGui.GetTextLineHeight();
+        if (iconId == 0)
+        {
+            ImGui.Dummy(new Vector2(size, size));
+            return;
+        }
+        try
+        {
+            var tex = Service.TextureProvider.GetFromGameIcon(new GameIconLookup(iconId)).GetWrapOrEmpty();
+            ImGui.Image(tex.Handle, new Vector2(size, size));
+        }
+        catch
+        {
+            ImGui.Dummy(new Vector2(size, size));
+        }
+    }
+
+    private static string CompetitionLabel(int tier) => tier switch
+    {
+        0 => "No active listings — be the first seller.",
+        1 => "Low competition — easy to sell into.",
+        2 => "Busy board — expect to undercut.",
+        _ => "Saturated — price war, thin margins.",
+    };
 
     private static int GetEffectiveLevel(Configuration config)
     {
