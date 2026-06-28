@@ -1,7 +1,6 @@
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
-using FFXIVClientStructs.FFXIV.Client.Game;
 using GilMaster.Core;
 using GilMaster.Models;
 using System;
@@ -114,6 +113,7 @@ public sealed class GatherTab
 
         // Standalone node finder — type any gatherable and see its best node.
         DrawMaterialSearch();
+        QueueTab.DrawRetainerToggle();
 
         if (targetItem is null)
         {
@@ -457,11 +457,9 @@ public sealed class GatherTab
         return dict;
     }
 
-    private static unsafe int GetInventoryCount(uint itemId)
-    {
-        try { return (int)InventoryManager.Instance()->GetInventoryItemCount(itemId); }
-        catch { return 0; }
-    }
+    // Route through CraftQueue so the same retainer/alt-aware counting (Allagan Tools)
+    // applies everywhere counts are shown.
+    private static int GetInventoryCount(uint itemId) => CraftQueue.GetItemCount(itemId);
 
     private static void OpenMap(GatherNode node)
     {

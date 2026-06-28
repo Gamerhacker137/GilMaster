@@ -163,6 +163,13 @@ public sealed class CraftQueue
 
     private static unsafe int ReadItemCount(uint itemId)
     {
+        // When enabled, count the whole cross-character stash (active char + retainers
+        // + alts) via Allagan Tools, so mats parked on a retainer still count as "have".
+        if (Plugin.Config.IncludeRetainerInventory)
+        {
+            var owned = Plugin.AllaganTools.CountOwned(itemId);
+            if (owned >= 0) return (int)owned;
+        }
         try { return (int)InventoryManager.Instance()->GetInventoryItemCount(itemId); }
         catch { return 0; }
     }

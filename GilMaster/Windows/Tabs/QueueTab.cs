@@ -130,6 +130,9 @@ public sealed class QueueTab
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Scan your inventory and list everything you have the materials to craft right now (any job, your level or below).");
 
+        // Retainer/alt-aware counting via Allagan Tools.
+        DrawRetainerToggle(sameLine: true);
+
         if (makeableResults.Count > 0)
         {
             ImGui.SameLine();
@@ -385,6 +388,30 @@ public sealed class QueueTab
                 queue.Missing.Clear();
                 executor.Stop();
             }
+        }
+    }
+
+    // Toggle: include retainer/alt inventory (Allagan Tools) in all "have" counts.
+    public static void DrawRetainerToggle(bool sameLine = false)
+    {
+        var config = Plugin.Config;
+        if (Plugin.AllaganTools.IsAvailable)
+        {
+            if (sameLine) ImGui.SameLine();
+            var inc = config.IncludeRetainerInventory;
+            if (ImGui.Checkbox("Count retainers/alts##incret", ref inc))
+            {
+                config.IncludeRetainerInventory = inc;
+                config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Use Allagan Tools to count materials stored on your retainers and alt\ncharacters too — so mats parked on a retainer still count as \"have\".");
+        }
+        else if (config.IncludeRetainerInventory)
+        {
+            // Was enabled but Allagan Tools is gone — counts silently fall back to bags.
+            if (sameLine) ImGui.SameLine();
+            ImGui.TextDisabled("(install Allagan Tools for retainer counts)");
         }
     }
 

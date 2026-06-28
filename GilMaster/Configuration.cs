@@ -27,6 +27,10 @@ public sealed class Configuration : IPluginConfiguration
     public bool ShowAetheryteHints { get; set; } = true;
     public bool ShowInventoryCounts { get; set; } = true;
 
+    // Count items stored on retainers / alts (requires Allagan Tools). When on, Have /
+    // "What can I make?" / missing-material checks include your whole cross-character stash.
+    public bool IncludeRetainerInventory { get; set; } = false;
+
     // Craft tab
     public bool ShowBasicRotationHints { get; set; } = true;
     public int CraftQuantity { get; set; } = 1;
