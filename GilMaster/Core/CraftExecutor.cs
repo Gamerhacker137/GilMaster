@@ -86,6 +86,8 @@ public sealed class CraftExecutor : IDisposable
     private SimulationInput? _input;
     // True when the in-flight solve started from the LIVE mid-craft state (adopt at step 0).
     private bool _pendingIsLive;
+    // Last step we kicked a live re-solve on, so we re-solve once per step (not per frame).
+    private uint _lastResolveStep;
     // Combo/usage state, mutated as we execute planned actions, fed back into re-solves.
     private ActionStates _liveActionStates;
 
@@ -111,6 +113,7 @@ public sealed class CraftExecutor : IDisposable
         _planTask        = null;
         _input           = null;
         _pendingIsLive   = false;
+        _lastResolveStep = 0;
         _liveActionStates = default;
         CurrentState     = State.WaitingForSynth;
         StatusText       = $"Open crafting window and start synth (×{quantity})...";
@@ -264,15 +267,19 @@ public sealed class CraftExecutor : IDisposable
             OnChanged?.Invoke();
         }
 
-        // Adaptive re-solve: when the planned rotation is exhausted (or was lost) but the
-        // craft isn't finished, solve again FROM THE LIVE STATE instead of greedy-finishing.
+        // Adaptive re-solve (the Artisan behaviour): re-solve FROM THE LIVE STATE at the
+        // start of every step — and whenever the plan is exhausted/lost — so each action
+        // reflects the real progress/quality/durability/condition/buffs. The solve runs in
+        // the background during the action animation; the freshest plan is adopted at step 0.
         // HQ only — NQ stays on the fast greedy synthesis loop.
-        var craftOngoing = state.Progress < state.MaxProgress;
+        var craftOngoing  = state.Progress < state.MaxProgress;
         var planExhausted = plannedRotation != null && planStep >= plannedRotation.Length;
         var planLost      = plannedRotation == null && state.StepCount > 1;
+        var newStep       = state.StepCount > 1 && state.StepCount != _lastResolveStep;
         if (Plugin.Config.PreferHq && _input != null && _planTask == null
-            && craftOngoing && (planExhausted || planLost))
+            && craftOngoing && (planExhausted || planLost || newStep))
         {
+            _lastResolveStep = state.StepCount;
             StartLiveResolve(state);
         }
 
@@ -484,9 +491,10 @@ public sealed class CraftExecutor : IDisposable
         _                        => CCondition.Normal,
     };
 
-    // Read live crafting buffs into Craftimizer's Effects struct. Durations are in steps
-    // (the synth buff counter); Inner Quiet is a stack count. Status IDs are the standard
-    // crafting-buff ids. Logged each re-solve so the mapping can be verified in-game.
+    // Read live crafting buffs into Craftimizer's Effects struct. CRUCIAL: crafting buff
+    // step-counters live in Status.Param (NOT RemainingTime) — this is exactly how Artisan
+    // reads them (RawInformation/Character/Buffs.cs + Crafting.BuildStepState). Status IDs
+    // match Artisan's Buffs constants.
     private static Effects ReadEffectsStruct()
     {
         var fx = new Effects();
@@ -494,18 +502,18 @@ public sealed class CraftExecutor : IDisposable
         if (player == null) return fx;
         foreach (var s in player.StatusList)
         {
-            var dur = (byte)Math.Clamp((int)Math.Round(s.RemainingTime), 0, 255);
+            var p = (byte)Math.Clamp((int)s.Param, 0, 255);
             switch (s.StatusId)
             {
                 case 251:  fx.InnerQuiet     = (byte)Math.Clamp((int)s.Param, 0, 10); break; // stacks
-                case 252:  fx.WasteNot       = dur; break;
-                case 257:  fx.WasteNot2      = dur; break;
-                case 2226: fx.Veneration     = dur; break;
-                case 2189: fx.Innovation     = dur; break;
-                case 254:  fx.GreatStrides   = dur; break;
-                case 2191: fx.MuscleMemory   = dur; break;
-                case 1164: fx.Manipulation   = dur; break;
-                case 2190: fx.FinalAppraisal = dur; break;
+                case 252:  fx.WasteNot       = p; break;
+                case 257:  fx.WasteNot2      = p; break;
+                case 2226: fx.Veneration     = p; break;
+                case 2189: fx.Innovation     = p; break;
+                case 254:  fx.GreatStrides   = p; break;
+                case 2191: fx.MuscleMemory   = p; break;
+                case 1164: fx.Manipulation   = p; break;
+                case 2190: fx.FinalAppraisal = p; break;
             }
         }
         return fx;
