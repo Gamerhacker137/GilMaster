@@ -25,6 +25,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly WindowSystem windowSystem = new("GilMaster");
     private readonly MainWindow mainWindow;
+    private readonly CraftListContextMenu contextMenu = new();
 
     private const string Command = "/gilmaster";
 
@@ -64,6 +65,8 @@ public sealed class Plugin : IDalamudPlugin
         Service.PluginInterface.UiBuilder.Draw += windowSystem.Draw;
         Service.PluginInterface.UiBuilder.OpenMainUi += OpenMainWindow;
         Service.PluginInterface.UiBuilder.OpenConfigUi += OpenMainWindow;
+
+        contextMenu.Enable();
     }
 
     private void OnCommand(string command, string args) => OpenMainWindow();
@@ -75,6 +78,7 @@ public sealed class Plugin : IDalamudPlugin
         Service.PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
         Service.PluginInterface.UiBuilder.OpenMainUi -= OpenMainWindow;
         Service.PluginInterface.UiBuilder.OpenConfigUi -= OpenMainWindow;
+        contextMenu.Dispose();
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
         CraftQueueExecutor.Dispose();

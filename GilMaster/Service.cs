@@ -20,6 +20,7 @@ internal sealed class Service
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
+    [PluginService] internal static IContextMenu ContextMenu { get; private set; } = null!;
 
     internal static void Initialize(IDalamudPluginInterface pi) => pi.Create<Service>();
 }
