@@ -79,6 +79,7 @@ public sealed class Plugin : IDalamudPlugin
         Service.PluginInterface.UiBuilder.OpenMainUi -= OpenMainWindow;
         Service.PluginInterface.UiBuilder.OpenConfigUi -= OpenMainWindow;
         contextMenu.Dispose();
+        MateriaExtractor.Dispose();
         windowSystem.RemoveAllWindows();
         mainWindow.Dispose();
         CraftQueueExecutor.Dispose();

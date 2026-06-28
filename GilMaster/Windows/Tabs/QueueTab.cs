@@ -375,10 +375,30 @@ public sealed class QueueTab
         else
             ImGui.TextDisabled("No equipped gear at 100% spiritbond yet.");
 
-        if (ImGui.Button(mx.WindowOpen ? "Close extraction window" : "Open materia extraction"))
-            mx.ToggleWindow();
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Opens the game's Materia Extraction window so you can pull materia\nfrom your 100%-spiritbonded gear.");
+        if (mx.IsActive)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.85f, 0.2f, 1f), "Auto-extracting…");
+            ImGui.SameLine();
+            if (ImGui.Button("Stop##mxstop")) mx.Stop();
+        }
+        else
+        {
+            if (ready == 0) ImGui.BeginDisabled();
+            if (ImGui.Button("Extract all materia")) mx.Start();
+            if (ready == 0) ImGui.EndDisabled();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Automatically pull materia from every 100%-spiritbonded piece, one after another.\nStops on its own when nothing's left or your bags are full.");
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton(mx.WindowOpen ? "Close window" : "Open window"))
+                mx.ToggleWindow();
+        }
+
+        if (!string.IsNullOrEmpty(mx.Status))
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled(mx.Status);
+        }
         ImGui.Separator();
     }
 
