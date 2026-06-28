@@ -399,6 +399,18 @@ public sealed class FindTab
             selected = item;
             MainWindow.SwitchToGather(item);
         }
+        if (Plugin.Artisan.IsAvailable && ImGui.MenuItem("Craft 1 with Artisan"))
+        {
+            var q = Plugin.CraftQueue;
+            q.Build(item.ItemId, 1);
+            if (q.Entries.Count > 0 && q.Missing.Count == 0)
+            {
+                var n = Plugin.Artisan.CraftAll(q.Entries);
+                if (n > 0) Service.ToastGui.ShowNormal($"Sent {item.Name} to Artisan.");
+                else { MainWindow.SwitchToQueue(); Service.ToastGui.ShowError("Couldn't reach Artisan — opened the Queue tab."); }
+            }
+            else { MainWindow.SwitchToQueue(); Service.ToastGui.ShowNormal("Missing materials — see the Queue tab."); }
+        }
         if (ImGui.MenuItem("Link in chat"))
             LinkItemInChat(item);
         if (ImGui.MenuItem("Copy name"))

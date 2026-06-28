@@ -164,22 +164,67 @@ public sealed class ListsTab
         var totalUnits = list.Items.Sum(i => i.Quantity);
         ImGui.TextDisabled($"{list.Items.Count} item(s), {totalUnits} unit(s) total.");
 
+        var artisan = Plugin.Artisan;
         var queueRunning = Plugin.CraftQueueExecutor.CurrentState is
             CraftQueueExecutor.State.SwitchingJob or
             CraftQueueExecutor.State.OpeningRecipe or
             CraftQueueExecutor.State.Running;
 
         if (queueRunning) ImGui.BeginDisabled();
-        if (ImGui.Button("Build & open Queue"))
+
+        List<(uint, int)> Targets() => list.Items.Select(i => (i.ItemId, i.Quantity)).ToList();
+
+        if (artisan.IsAvailable)
         {
-            var targets = list.Items.Select(i => (i.ItemId, i.Quantity)).ToList();
-            Plugin.CraftQueue.BuildMulti(targets);
-            MainWindow.SwitchToQueue();
-            Service.ToastGui.ShowNormal($"Queued '{list.Name}' — check the Queue tab.");
+            // Artisan is the better crafter — make it the one-click default for a whole list.
+            if (ImGui.Button("Craft with Artisan"))
+            {
+                var q = Plugin.CraftQueue;
+                q.BuildMulti(Targets());
+                if (q.Entries.Count > 0 && q.Missing.Count == 0)
+                {
+                    var n = artisan.CraftAll(q.Entries);
+                    if (n > 0)
+                        Service.ToastGui.ShowNormal($"Sent '{list.Name}' ({n} step{(n == 1 ? "" : "s")}) to Artisan.");
+                    else
+                    {
+                        MainWindow.SwitchToQueue();
+                        Service.ToastGui.ShowError("Couldn't reach Artisan — opened the Queue tab.");
+                    }
+                }
+                else
+                {
+                    MainWindow.SwitchToQueue();
+                    Service.ToastGui.ShowNormal(q.Entries.Count == 0
+                        ? "Nothing to craft — you already have everything."
+                        : "Missing materials — see the Queue tab.");
+                }
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Resolve the whole list into one queue (shared materials merged,\nitems you already have skipped) and hand it straight to Artisan.");
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Open in Queue"))
+            {
+                Plugin.CraftQueue.BuildMulti(Targets());
+                MainWindow.SwitchToQueue();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Build the queue and review it on the Queue tab before crafting.");
         }
+        else
+        {
+            if (ImGui.Button("Build & open Queue"))
+            {
+                Plugin.CraftQueue.BuildMulti(Targets());
+                MainWindow.SwitchToQueue();
+                Service.ToastGui.ShowNormal($"Queued '{list.Name}' — check the Queue tab.");
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Resolve the whole list into one queue and switch to the Queue tab to craft it.\nTip: install Artisan for one-click, hands-free crafting.");
+        }
+
         if (queueRunning) ImGui.EndDisabled();
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Resolve the whole list into one queue (shared materials merged,\nitems you already have skipped) and switch to the Queue tab to craft it.");
 
         if (queueRunning)
         {
