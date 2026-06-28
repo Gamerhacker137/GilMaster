@@ -1,4 +1,7 @@
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling;
+using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface.Textures;
 using GilMaster.Core;
 using GilMaster.Models;
@@ -286,7 +289,10 @@ public sealed class FindTab
                         + $"\nMat cost/craft: {item.EstimatedMaterialCost:N0}"
                         + (config.AssumeGatherableFree ? " (gathered = free)" : " (mats from market)")
                         + $"\nNet/craft: NQ {item.ProfitNq:N0}"
-                        + (item.DisplayHqPrice > item.DisplayNqPrice ? $" · HQ {item.ProfitHq:N0}" : ""));
+                        + (item.DisplayHqPrice > item.DisplayNqPrice ? $" · HQ {item.ProfitHq:N0}" : "")
+                        + "\n(right-click for more)");
+
+                DrawRowContextMenu(item);
 
                 ImGui.TableSetColumnIndex(1);
                 ImGui.Text(item.RecipeLevel.ToString());
@@ -369,6 +375,47 @@ public sealed class FindTab
         };
         if (config.SortDescending) ordered = ordered.Reverse();
         return [.. ordered];
+    }
+
+    // Right-click menu on a result row — quick actions every market plugin offers.
+    private void DrawRowContextMenu(ProfitableItem item)
+    {
+        if (!ImGui.BeginPopupContextItem($"##ctx{item.ItemId}")) return;
+
+        ImGui.TextDisabled(item.Name);
+        ImGui.Separator();
+
+        if (ImGui.MenuItem("Plan — gather & craft"))
+        {
+            selected = item;
+            MainWindow.SwitchToGather(item);
+        }
+        if (ImGui.MenuItem("Link in chat"))
+            LinkItemInChat(item);
+        if (ImGui.MenuItem("Copy name"))
+            ImGui.SetClipboardText(item.Name);
+
+        ImGui.Separator();
+        if (ImGui.MenuItem("Open on Universalis"))
+            Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{item.ItemId}");
+        if (ImGui.MenuItem("Open on Garland Tools"))
+            Dalamud.Utility.Util.OpenLink($"https://garlandtools.org/db/#item/{item.ItemId}");
+
+        ImGui.EndPopup();
+    }
+
+    // Print a clickable game item link to chat (hover/click shows the in-game tooltip).
+    private static void LinkItemInChat(ProfitableItem item)
+    {
+        try
+        {
+            var seString = new SeString(
+                new ItemPayload(item.ItemId, false),
+                new TextPayload($"{(char)SeIconChar.LinkMarker}{item.Name}"),
+                RawPayload.LinkTerminator);
+            Service.ChatGui.Print(seString);
+        }
+        catch (Exception ex) { Service.Log.Warning(ex, "Failed to link item in chat"); }
     }
 
     // Draw the game item icon at text-line height. Falls back to blank space so
