@@ -33,6 +33,22 @@ public sealed class MissingMaterial
 /// <summary>An item the player has the materials to craft right now.</summary>
 public sealed record CraftableSuggestion(uint ItemId, string Name, string JobName, int MaxQuantity);
 
+/// <summary>A node in the queue's nested crafting tree (main item → its sub-components).</summary>
+public sealed class QueueTreeNode
+{
+    public uint   ItemId         { get; init; }
+    public string Name           { get; init; } = "";
+    public int    QuantityNeeded { get; init; }   // how many this branch needs
+    public int    Have           { get; init; }   // currently in inventory
+    public int    CraftCount     { get; init; }   // how many to craft for this branch
+    public bool   IsCraftable    { get; init; }
+    public string JobName        { get; init; } = "";
+    public int    RecipeLevel    { get; init; }
+    public List<QueueTreeNode> Children { get; } = [];
+
+    public bool Satisfied => Have >= QuantityNeeded;
+}
+
 public sealed class CraftQueue
 {
     private sealed class RecipeInfo
@@ -52,6 +68,8 @@ public sealed class CraftQueue
 
     public List<CraftQueueEntry>  Entries { get; } = [];
     public List<MissingMaterial>  Missing { get; } = [];
+    // The top-level items the user asked for — roots of the display tree.
+    public List<(uint ItemId, int Quantity)> Targets { get; private set; } = [];
     public bool IsEmpty => Entries.Count == 0 && Missing.Count == 0;
 
     // ── Build the crafting queue for targetItemId × quantity ─────────────
@@ -72,6 +90,7 @@ public sealed class CraftQueue
     {
         Entries.Clear();
         Missing.Clear();
+        Targets = targets.Where(t => t.ItemId != 0 && t.Quantity > 0).ToList();
         _recipeIndex ??= BuildRecipeIndex();
 
         // Pass 1 — BFS: for each item, compute how many of its ingredients
@@ -152,6 +171,51 @@ public sealed class CraftQueue
                 QuantityToCraft = craftCount,
             });
         }
+    }
+
+    // ── Display tree: main items first, sub-components nested underneath ──
+    // Built from the recipe structure of the Targets, netting each branch against
+    // current inventory. Sub-components are crafted first (the flat Entries list is
+    // leaves-first); this tree is purely the "what feeds what" view for the UI.
+    public List<QueueTreeNode> BuildDisplayTree()
+    {
+        _recipeIndex ??= BuildRecipeIndex();
+        var roots = new List<QueueTreeNode>();
+        foreach (var (itemId, qty) in Targets)
+            roots.Add(BuildNode(itemId, qty, 0));
+        return roots;
+    }
+
+    private QueueTreeNode BuildNode(uint itemId, int qtyNeeded, int depth)
+    {
+        var have = GetItemCount(itemId);
+
+        if (depth > 12 || !_recipeIndex!.TryGetValue(itemId, out var ri))
+            // Raw material (or depth guard) — a leaf to gather/buy.
+            return new QueueTreeNode
+            {
+                ItemId = itemId, Name = GetItemName(itemId),
+                QuantityNeeded = qtyNeeded, Have = have, IsCraftable = false,
+            };
+
+        var still      = Math.Max(0, qtyNeeded - have);
+        var craftCount = (int)Math.Ceiling((double)still / ri.AmountResult);
+
+        var node = new QueueTreeNode
+        {
+            ItemId = itemId, Name = GetItemName(itemId),
+            QuantityNeeded = qtyNeeded, Have = have,
+            CraftCount = craftCount, IsCraftable = true,
+            JobName = ri.JobName, RecipeLevel = ri.RecipeLevel,
+        };
+
+        // Only expand sub-components we actually need to make (none if we already have enough).
+        if (craftCount > 0)
+            foreach (var (ingId, ingAmt) in ri.Ingredients)
+                if (ingId != 0)
+                    node.Children.Add(BuildNode(ingId, ingAmt * craftCount, depth + 1));
+
+        return node;
     }
 
     // ── Live inventory count (all containers including crystal pouch) ─────

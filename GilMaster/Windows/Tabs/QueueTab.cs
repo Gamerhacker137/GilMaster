@@ -205,75 +205,20 @@ public sealed class QueueTab
         var levelCache = new Dictionary<int, int>();
         int LvlFor(int jobId) => levelCache.TryGetValue(jobId, out var v)
             ? v : (levelCache[jobId] = CraftQueue.GetCrafterLevel(jobId));
-        var levelBlocked = new List<CraftQueueEntry>();
+        var levelBlocked = queue.Entries.Where(e => LvlFor(e.JobId) < e.RecipeLevel).ToList();
 
-        // ── Crafting steps ────────────────────────────────────────────────
-        ImGui.TextUnformatted("Crafting steps:");
+        // ── Crafting tree (main item first, sub-components nested underneath) ──
+        ImGui.TextUnformatted("Crafting tree:");
+        ImGui.SameLine();
+        ImGui.TextDisabled("(sub-items are crafted first)");
 
-        if (ImGui.BeginTable("##qsteps", 5,
-            ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
-        {
-            ImGui.TableSetupColumn("",       ImGuiTableColumnFlags.WidthFixed,   18);
-            ImGui.TableSetupColumn("Item",   ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableSetupColumn("Job",    ImGuiTableColumnFlags.WidthFixed,   40);
-            ImGui.TableSetupColumn("Have",   ImGuiTableColumnFlags.WidthFixed,   45);
-            ImGui.TableSetupColumn("Craft",  ImGuiTableColumnFlags.WidthFixed,   45);
-            ImGui.TableHeadersRow();
+        var currentItemId = executor.CurrentState == CraftQueueExecutor.State.Running
+            && executor.CurrentIndex >= 0 && executor.CurrentIndex < queue.Entries.Count
+            ? queue.Entries[executor.CurrentIndex].ItemId : 0u;
 
-            for (var i = 0; i < queue.Entries.Count; i++)
-            {
-                var entry = queue.Entries[i];
-                bool isCurrent = executor.CurrentState == CraftQueueExecutor.State.Running
-                              && executor.CurrentIndex == i;
-                bool isDone    = entry.IsComplete;
-
-                ImGui.TableNextRow();
-
-                // Status icon column
-                ImGui.TableNextColumn();
-                if (isDone)
-                    ImGui.TextColored(new Vector4(0.3f, 1f, 0.4f, 1f), "v");
-                else if (isCurrent)
-                    ImGui.TextColored(new Vector4(1f, 0.9f, 0.2f, 1f), ">");
-                else
-                    ImGui.TextDisabled("-");
-
-                // Level check — can the player craft this recipe yet?
-                var crafterLvl   = LvlFor(entry.JobId);
-                bool levelTooLow = crafterLvl < entry.RecipeLevel;
-                if (levelTooLow) levelBlocked.Add(entry);
-
-                // Item name (red if your crafter level is too low)
-                ImGui.TableNextColumn();
-                var nameColor = levelTooLow ? new Vector4(1f, 0.3f, 0.3f, 1f)  :
-                                isDone       ? new Vector4(0.3f, 1f, 0.4f, 1f)  :
-                                isCurrent    ? new Vector4(1f, 0.9f, 0.2f, 1f)  :
-                                               new Vector4(1f, 1f, 1f, 1f);
-                ImGui.TextColored(nameColor, entry.Name);
-                if (levelTooLow)
-                {
-                    ImGui.SameLine();
-                    ImGui.TextColored(new Vector4(1f, 0.3f, 0.3f, 1f), $"(need Lv {entry.RecipeLevel}, you're {crafterLvl})");
-                }
-
-                // Job
-                ImGui.TableNextColumn();
-                ImGui.TextDisabled(entry.JobName);
-
-                // Have in bags
-                ImGui.TableNextColumn();
-                var liveCount = CraftQueue.GetItemCount(entry.ItemId);
-                ImGui.Text(liveCount.ToString());
-
-                // Craft count
-                ImGui.TableNextColumn();
-                if (isDone)
-                    ImGui.TextColored(new Vector4(0.3f, 1f, 0.4f, 1f), $"{entry.QuantityToCraft}");
-                else
-                    ImGui.TextUnformatted(entry.QuantityToCraft.ToString());
-            }
-            ImGui.EndTable();
-        }
+        var uid = 0;
+        foreach (var root in queue.BuildDisplayTree())
+            DrawTreeNode(root, queue, currentItemId, LvlFor, ref uid);
 
         // ── Missing materials ─────────────────────────────────────────────
         if (queue.Missing.Count > 0)
@@ -435,6 +380,45 @@ public sealed class QueueTab
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Opens the game's Materia Extraction window so you can pull materia\nfrom your 100%-spiritbonded gear.");
         ImGui.Separator();
+    }
+
+    // Render one node of the crafting tree (and its sub-components), file-tree style.
+    private static void DrawTreeNode(QueueTreeNode node, CraftQueue queue, uint currentItemId,
+        Func<int, int> lvlFor, ref int uid)
+    {
+        var myId  = uid++;
+        var entry = queue.Entries.Find(e => e.ItemId == node.ItemId);
+        var done  = node.IsCraftable ? (node.CraftCount == 0 || (entry?.IsComplete ?? false)) : node.Satisfied;
+        var current     = node.ItemId == currentItemId;
+        var levelTooLow = node.IsCraftable && entry != null && lvlFor(entry.JobId) < node.RecipeLevel;
+
+        var color = levelTooLow      ? new Vector4(1f, 0.3f, 0.3f, 1f)  :
+                    current          ? new Vector4(1f, 0.9f, 0.2f, 1f)  :
+                    done             ? new Vector4(0.3f, 1f, 0.4f, 1f)  :
+                    node.IsCraftable ? new Vector4(1f, 1f, 1f, 1f)      :
+                                       new Vector4(1f, 0.7f, 0.45f, 1f); // raw material
+
+        string action = !node.IsCraftable
+            ? (node.Satisfied ? $"have {node.Have}" : $"gather/buy {node.QuantityNeeded - node.Have} (have {node.Have})")
+            : node.CraftCount > 0 ? $"craft {node.CraftCount} (have {node.Have})" : $"have {node.Have}";
+        string tag   = node.IsCraftable ? $"  [{node.JobName}]" : "  [Gather/Buy]";
+        string label = $"{node.Name}  —  {action}{tag}";
+        if (levelTooLow) label += $"  ⚠ needs Lv {node.RecipeLevel}";
+
+        var flags = ImGuiTreeNodeFlags.SpanAvailWidth | ImGuiTreeNodeFlags.DefaultOpen;
+        if (node.Children.Count == 0)
+            flags |= ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen | ImGuiTreeNodeFlags.Bullet;
+
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
+        var open = ImGui.TreeNodeEx($"{label}##{myId}", flags);
+        ImGui.PopStyleColor();
+
+        if (node.Children.Count > 0 && open)
+        {
+            foreach (var child in node.Children)
+                DrawTreeNode(child, queue, currentItemId, lvlFor, ref uid);
+            ImGui.TreePop();
+        }
     }
 
     // ── Craftable item index ──────────────────────────────────────────────
