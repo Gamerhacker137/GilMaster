@@ -19,6 +19,7 @@ public sealed class Plugin : IDalamudPlugin
     public static CraftQueueExecutor CraftQueueExecutor { get; private set; } = null!;
     public static ArtisanIpc         Artisan            { get; private set; } = null!;
     public static AllaganToolsBridge AllaganTools       { get; private set; } = null!;
+    public static MateriaExtractor   MateriaExtractor   { get; private set; } = null!;
 
     private readonly WindowSystem windowSystem = new("GilMaster");
     private readonly MainWindow mainWindow;
@@ -43,6 +44,7 @@ public sealed class Plugin : IDalamudPlugin
         CraftQueueExecutor = new CraftQueueExecutor();
         Artisan            = new ArtisanIpc();
         AllaganTools       = new AllaganToolsBridge();
+        MateriaExtractor   = new MateriaExtractor();
 
         // Load last scan from disk so the list isn't empty on startup
         ProfitEngine.TryLoadCache();

@@ -190,6 +190,9 @@ public sealed class QueueTab
             ImGui.Separator();
         }
 
+        // ── Materia extraction ────────────────────────────────────────────
+        DrawMateriaSection();
+
         // ── Empty state ───────────────────────────────────────────────────
         if (queue.IsEmpty)
         {
@@ -413,6 +416,25 @@ public sealed class QueueTab
             if (sameLine) ImGui.SameLine();
             ImGui.TextDisabled("(install Allagan Tools for retainer counts)");
         }
+    }
+
+    // Materia helper — spot 100%-spiritbonded gear and open the extraction window.
+    private static void DrawMateriaSection()
+    {
+        var mx = Plugin.MateriaExtractor;
+        if (!ImGui.CollapsingHeader("Materia extraction")) return;
+
+        var ready = mx.ReadyCount();
+        if (ready > 0)
+            ImGui.TextColored(new Vector4(0.3f, 1f, 0.4f, 1f), $"{ready} piece(s) at 100% spiritbond — ready to extract.");
+        else
+            ImGui.TextDisabled("No equipped gear at 100% spiritbond yet.");
+
+        if (ImGui.Button(mx.WindowOpen ? "Close extraction window" : "Open materia extraction"))
+            mx.ToggleWindow();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Opens the game's Materia Extraction window so you can pull materia\nfrom your 100%-spiritbonded gear.");
+        ImGui.Separator();
     }
 
     // ── Craftable item index ──────────────────────────────────────────────
