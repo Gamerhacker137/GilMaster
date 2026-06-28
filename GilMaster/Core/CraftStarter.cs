@@ -76,7 +76,7 @@ public sealed class CraftStarter : IDisposable
                             : "";
                         sb2.Append($" [{node->NodeId}:{(btn->IsEnabled ? "ON" : "off")}:\"{label2}\"]");
                     }
-                    Service.Log.Information(sb2.ToString());
+                    Service.Log.Debug(sb2.ToString());
                 }
             }
         }

@@ -61,7 +61,7 @@ public sealed class CraftExecutor : IDisposable
 
     private int craftsRemaining;
     private DateTime lastActionAt = DateTime.MinValue;
-    private const double StepDelay = 3.5;
+    private const double StepDelay = 1.0;
     // How long to hold the first action waiting for the solver, so the plan starts
     // from step 1 instead of desyncing behind a greedy opener.
     private const double PlanGrace = 12.0;
@@ -266,7 +266,9 @@ public sealed class CraftExecutor : IDisposable
             }
             else
             {
-                Service.Log.Warning("[GilMaster] Solver returned no plan — using greedy fallback.");
+                // Near craft-end (quality maxed, just need progress) the solver often
+                // returns nothing to optimise — greedy finishes the progress. Not noteworthy.
+                Service.Log.Debug("[GilMaster] Solver returned no plan — using greedy fallback.");
             }
             OnChanged?.Invoke();
         }
@@ -462,7 +464,7 @@ public sealed class CraftExecutor : IDisposable
 
         _pendingIsLive = true;
         _planTask = Task.Run(() => CraftimizerBridge.SolveFrom(live));
-        Service.Log.Information(
+        Service.Log.Debug(
             $"[GilMaster] Adaptive re-solve from live state: prog={st.Progress}/{st.MaxProgress} " +
             $"qual={st.Quality}/{st.MaxQuality} dur={st.Durability} cp={cp} cond={st.Condition} " +
             $"iq={effects.InnerQuiet} ven={effects.Veneration} inn={effects.Innovation} " +
