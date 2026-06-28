@@ -4,6 +4,7 @@ using GilMaster.Core;
 using GilMaster.Models;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 
 namespace GilMaster.Windows.Tabs;
@@ -30,6 +31,23 @@ public sealed class FlipTab
             return;
         }
         ImGui.TextDisabled($"DC: {dc}  ·  Home (sell): {home}");
+
+        // ── Scan latest Find results for flips ────────────────────────────
+        var findIds = Plugin.ProfitEngine.Results.Select(r => r.ItemId).Distinct().ToList();
+        var canScan = !engine.Busy && findIds.Count > 0;
+        if (!canScan) ImGui.BeginDisabled();
+        if (ImGui.Button($"Scan Find results ({findIds.Count})"))
+            engine.Scan(findIds, dc, home);
+        if (!canScan) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Check every item from your latest Find scan for a buy-elsewhere / sell-at-home flip.\nRun a Find scan first to populate candidates. Only profitable flips are kept.");
+        if (engine.Busy)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Cancel##flipscan")) engine.CancelScan();
+            ImGui.SameLine();
+            ImGui.ProgressBar(engine.Progress, new Vector2(150, 0));
+        }
 
         // ── Search ────────────────────────────────────────────────────────
         ImGui.SetNextItemWidth(260);
@@ -69,7 +87,7 @@ public sealed class FlipTab
 
         if (engine.Results.Count == 0)
         {
-            ImGui.TextDisabled("Search an item to check whether it's worth buying elsewhere and reselling at home.");
+            ImGui.TextDisabled("Search an item, or \"Scan Find results\", to spot buy-elsewhere / sell-at-home flips.");
             return;
         }
 

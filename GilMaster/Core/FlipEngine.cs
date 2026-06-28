@@ -18,11 +18,13 @@ public sealed class FlipEngine : IDisposable
     private readonly UniversalisClient universalis = new();
 
     public IReadOnlyList<FlipResult> Results { get; private set; } = [];
-    public bool   Busy   { get; private set; }
-    public string Status { get; private set; } = string.Empty;
+    public bool   Busy     { get; private set; }
+    public string Status   { get; private set; } = string.Empty;
+    public float  Progress { get; private set; }
     public event System.Action? OnUpdated;
 
     private readonly List<FlipResult> results = [];
+    private System.Threading.CancellationTokenSource? scanCts;
 
     public void Lookup(uint itemId, string dc, string homeWorld)
     {
@@ -53,8 +55,65 @@ public sealed class FlipEngine : IDisposable
         });
     }
 
+    /// <summary>
+    /// Scan a batch of items (e.g. your latest Find results) for cross-world flips and
+    /// keep the profitable ones, ranked by best-case net stack profit.
+    /// </summary>
+    public void Scan(IReadOnlyList<uint> itemIds, string dc, string homeWorld)
+    {
+        if (itemIds.Count == 0 || string.IsNullOrEmpty(dc) || string.IsNullOrEmpty(homeWorld)) return;
+        scanCts?.Cancel();
+        scanCts = new System.Threading.CancellationTokenSource();
+        var ct = scanCts.Token;
+
+        Busy = true;
+        Progress = 0f;
+        Status = $"Scanning {itemIds.Count} item(s) across {dc}...";
+        results.Clear();
+        Results = [];
+        OnUpdated?.Invoke();
+
+        Task.Run(async () =>
+        {
+            try
+            {
+                var found = new List<FlipResult>();
+                for (var i = 0; i < itemIds.Count; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    Progress = (float)i / itemIds.Count;
+                    Status = $"Pricing {i + 1}/{itemIds.Count} across {dc}...";
+                    OnUpdated?.Invoke();
+
+                    var r = await Analyze(itemIds[i], dc, homeWorld).ConfigureAwait(false);
+                    if (r != null && r.NetMargin > 0)
+                    {
+                        found.Add(r);
+                        results.Clear();
+                        results.AddRange(found.OrderByDescending(x => x.NetStackProfit));
+                        Results = [.. results];
+                        OnUpdated?.Invoke();
+                    }
+                }
+                Progress = 1f;
+                Status = $"Done — {found.Count} profitable flip(s) of {itemIds.Count} checked.";
+            }
+            catch (OperationCanceledException) { Status = "Cancelled."; }
+            catch (Exception ex) { Service.Log.Warning(ex, "Flip scan failed"); Status = $"Error: {ex.Message}"; }
+            finally { Busy = false; OnUpdated?.Invoke(); }
+        }, ct);
+    }
+
+    public void CancelScan()
+    {
+        scanCts?.Cancel();
+        Busy = false;
+        Status = "Cancelled.";
+    }
+
     public void Clear()
     {
+        scanCts?.Cancel();
         results.Clear();
         Results = [];
         Status = string.Empty;
