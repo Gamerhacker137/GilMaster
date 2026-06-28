@@ -3,7 +3,7 @@
     "Author": "Gamerhacker137",
     "Name": "GilMaster",
     "InternalName": "GilMaster",
-    "AssemblyVersion": "1.0.13.0",
+    "AssemblyVersion": "1.0.14.0",
     "Punchline": "Find, gather, and craft the most profitable items on your server.",
     "Description": "Scans Universalis for high-demand crafted items matching your level, locates gathering spots for materials, and guides you through crafting with an adaptive rotation planner. Also includes a DoH/DoL leveling advisor. Use /gilmaster to open.",
     "Tags": ["market", "craft", "gather", "profit", "leveling"],

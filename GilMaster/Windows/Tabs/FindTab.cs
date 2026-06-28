@@ -154,6 +154,22 @@ public sealed class FindTab
         var free = config.AssumeGatherableFree;
         if (ImGui.Checkbox("Gathered = free##free", ref free)) { config.AssumeGatherableFree = free; config.Save(); }
 
+        // ── Level range filter (0 = no limit) ─────────────────────────
+        ImGui.SameLine();
+        ImGui.TextDisabled("Lvl");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(46);
+        var minLvl = config.MinLevelFilter;
+        if (ImGui.InputInt("##minlvl", ref minLvl, 0, 0)) { config.MinLevelFilter = Math.Clamp(minLvl, 0, 100); config.Save(); }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Hide recipes below this level (0 = no limit)");
+        ImGui.SameLine();
+        ImGui.TextDisabled("–");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(46);
+        var maxLvl = config.MaxLevelFilter;
+        if (ImGui.InputInt("##maxlvl", ref maxLvl, 0, 0)) { config.MaxLevelFilter = Math.Clamp(maxLvl, 0, 100); config.Save(); }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Hide recipes above this level (0 = no limit).\nSet to your level to drop high-level items you can't craft yet.");
+
         // ── Sort control: pick a metric, flip direction (low↔high) ────
         ImGui.SameLine();
         ImGui.TextDisabled("Sort by");
@@ -303,17 +319,22 @@ public sealed class FindTab
 
     private static List<ProfitableItem> GetSorted(IReadOnlyList<ProfitableItem> source, Configuration config)
     {
+        // Level-range filter (0 = no limit on either end).
+        IEnumerable<ProfitableItem> items = source;
+        if (config.MinLevelFilter > 0) items = items.Where(i => i.RecipeLevel >= config.MinLevelFilter);
+        if (config.MaxLevelFilter > 0) items = items.Where(i => i.RecipeLevel <= config.MaxLevelFilter);
+
         // Default sort (col 5 = Gil/day) ranks by demand × realistic price — the
         // "what sells a lot for a good price" metric the Find tab is built around.
         IEnumerable<ProfitableItem> ordered = config.SortColumn switch
         {
-            0 => source.OrderBy(i => i.Name),
-            1 => source.OrderBy(i => i.RecipeLevel),
-            2 => source.OrderBy(i => i.DisplayNqPrice),
-            3 => source.OrderBy(i => i.DisplayHqPrice),
-            4 => source.OrderBy(i => i.SaleVelocity),
-            6 => source.OrderBy(i => i.GetGilPerHour(false)), // col 6 = NQ gil/hr
-            _ => source.OrderBy(i => i.RevenuePerDay),         // col 5 = Gil/day (demand × price)
+            0 => items.OrderBy(i => i.Name),
+            1 => items.OrderBy(i => i.RecipeLevel),
+            2 => items.OrderBy(i => i.DisplayNqPrice),
+            3 => items.OrderBy(i => i.DisplayHqPrice),
+            4 => items.OrderBy(i => i.SaleVelocity),
+            6 => items.OrderBy(i => i.GetGilPerHour(false)), // col 6 = NQ gil/hr
+            _ => items.OrderBy(i => i.RevenuePerDay),         // col 5 = Gil/day (demand × price)
         };
         if (config.SortDescending) ordered = ordered.Reverse();
         return [.. ordered];

@@ -18,8 +18,10 @@ public sealed class Configuration : IPluginConfiguration
     public bool AssumeGatherableFree { get; set; } = true;
     public bool ScanDatacenter { get; set; } = false; // scan whole DC instead of home world
     public bool ScanAllJobs { get; set; } = false;    // scan every crafting job, ignore level filter
-    public int SortColumn { get; set; } = 5;          // 0=Item,1=Lvl,2=NQ Price,3=HQ Price,4=Sales/day,5=Gil/hr
+    public int SortColumn { get; set; } = 5;          // 0=Item,1=Lvl,2=NQ Price,3=HQ Price,4=Sales/day,5=Gil/day,6=Gil/hr
     public bool SortDescending { get; set; } = true;
+    public int MinLevelFilter { get; set; } = 0;      // hide recipes below this level (0 = no limit)
+    public int MaxLevelFilter { get; set; } = 0;      // hide recipes above this level (0 = no limit)
 
     // Gather tab
     public bool ShowAetheryteHints { get; set; } = true;
