@@ -85,4 +85,33 @@ public sealed class MarketDataResponse
 
     /// <summary>Units actually sold across the recent-history window — a raw demand signal.</summary>
     public long RecentUnitsSold => RecentHistory?.Sum(h => h.Quantity) ?? 0;
+
+    /// <summary>
+    /// Recent price trend: compares the median of the newer half of recent sales against
+    /// the older half. Returns direction (-1 falling, 0 flat, +1 rising) and the % change.
+    /// A &gt;5% swing counts as a real move; anything inside that is "flat".
+    /// </summary>
+    public (sbyte Direction, double Pct) RecentTrend(bool preferHq)
+    {
+        var sales = RecentHistory.Where(h => h.PricePerUnit > 0).ToList();
+        if (preferHq)
+        {
+            var hq = sales.Where(h => h.Hq).ToList();
+            if (hq.Count >= 6) sales = hq;
+        }
+        if (sales.Count < 6) return (0, 0);
+
+        var ordered = sales.OrderBy(h => h.Timestamp).ToList(); // oldest → newest
+        var half = ordered.Count / 2;
+        var older = ordered.Take(half).Select(h => h.PricePerUnit).OrderBy(p => p).ToList();
+        var newer = ordered.Skip(ordered.Count - half).Select(h => h.PricePerUnit).OrderBy(p => p).ToList();
+
+        long oldMed = older[older.Count / 2];
+        long newMed = newer[newer.Count / 2];
+        if (oldMed <= 0) return (0, 0);
+
+        var pct = (double)(newMed - oldMed) / oldMed * 100.0;
+        sbyte dir = (sbyte)(pct > 5 ? 1 : pct < -5 ? -1 : 0);
+        return (dir, pct);
+    }
 }

@@ -56,6 +56,16 @@ public sealed class ProfitableItem
 
     public bool HasActiveListings { get; init; }
 
+    // Recent price trend (-1 falling, 0 flat, +1 rising) and the % move.
+    public sbyte TrendDir { get; init; }
+    public double TrendPct { get; init; }
+
+    // Cheaper to just BUY the finished item than to craft it? (purchased mats cost more
+    // than the item's floor price for the whole yield). A trap-avoidance flag.
+    public bool BetterToBuy =>
+        MinListingPrice > 0 && EstimatedMaterialCost > 0
+        && EstimatedMaterialCost > MinListingPrice * AmountResult;
+
     // ── Competition signal ────────────────────────────────────────────────
     // Number of separate listings currently undercutting each other on the board.
     // Few sellers on a high-value item = easy money; a crowded board = a price war.

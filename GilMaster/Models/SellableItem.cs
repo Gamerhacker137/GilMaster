@@ -18,6 +18,9 @@ public sealed class SellableItem
     public int    Sellers   { get; init; }   // active listings on the board
     public double Velocity  { get; init; }   // sales per day
 
+    public sbyte  TrendDir  { get; init; }   // -1 falling, 0 flat, +1 rising
+    public double TrendPct  { get; init; }
+
     // The price to undercut the current floor by 1 (the relevant quality you're holding).
     public long SuggestedPrice
     {

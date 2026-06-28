@@ -130,6 +130,7 @@ public sealed class ProfitEngine : IDisposable
                 var realisticHq = data.RealisticPrice(true);
                 if (realisticNq <= 0 && realisticHq <= 0) continue;
 
+                var trend = data.RecentTrend(config.PreferHq);
                 var item = itemSheet.GetRowOrDefault(itemId);
                 results.Add(new ProfitableItem
                 {
@@ -152,6 +153,8 @@ public sealed class ProfitEngine : IDisposable
                     HasActiveListings = data.UnitsForSale > 0,
                     ActiveListings = data.Listings.Count,
                     UnitsForSale = data.UnitsForSale,
+                    TrendDir = trend.Direction,
+                    TrendPct = trend.Pct,
                 });
             }
 
@@ -310,6 +313,8 @@ public sealed class ProfitEngine : IDisposable
                     HasActiveListings = (data?.UnitsForSale ?? 0) > 0,
                     ActiveListings = data?.Listings.Count ?? 0,
                     UnitsForSale = data?.UnitsForSale ?? 0,
+                    TrendDir = data?.RecentTrend(config.PreferHq).Direction ?? 0,
+                    TrendPct = data?.RecentTrend(config.PreferHq).Pct ?? 0,
                 });
             }
 

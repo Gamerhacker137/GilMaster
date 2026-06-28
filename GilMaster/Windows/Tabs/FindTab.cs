@@ -290,9 +290,18 @@ public sealed class FindTab
                         + (config.AssumeGatherableFree ? " (gathered = free)" : " (mats from market)")
                         + $"\nNet/craft: NQ {item.ProfitNq:N0}"
                         + (item.DisplayHqPrice > item.DisplayNqPrice ? $" · HQ {item.ProfitHq:N0}" : "")
+                        + (item.TrendDir != 0 ? $"\nPrice {(item.TrendDir > 0 ? "rising" : "falling")} ~{Math.Abs(item.TrendPct):F0}% recently" : "")
+                        + (item.BetterToBuy ? "\n⚠ Cheaper to BUY than craft (mats cost more than the floor price)" : "")
                         + "\n(right-click for more)");
 
                 DrawRowContextMenu(item);
+
+                DrawTrend(item.TrendDir);
+                if (item.BetterToBuy)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(new Vector4(1f, 0.55f, 0.3f, 1f), "buy");
+                }
 
                 ImGui.TableSetColumnIndex(1);
                 ImGui.Text(item.RecipeLevel.ToString());
@@ -454,6 +463,15 @@ public sealed class FindTab
         {
             ImGui.Dummy(new Vector2(size, size));
         }
+    }
+
+    // Inline price-trend arrow (rising green ↑ / falling red ↓; nothing when flat).
+    private static void DrawTrend(sbyte dir)
+    {
+        if (dir == 0) return;
+        ImGui.SameLine();
+        if (dir > 0) ImGui.TextColored(new Vector4(0.3f, 1f, 0.4f, 1f), "↑");
+        else         ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f), "↓");
     }
 
     private static string CompetitionLabel(int tier) => tier switch
