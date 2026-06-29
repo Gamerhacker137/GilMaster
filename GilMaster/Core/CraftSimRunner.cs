@@ -38,7 +38,9 @@ public sealed class CraftSimRunner : IDisposable
     public IReadOnlyList<SimResult> Results { get; private set; } = [];
     public event System.Action? OnUpdated;
 
-    public void Run(int craftsmanship, int control, int cp, int level, int maxRecipes)
+    // jobFilter: craft-type id 0..7 (CRP..CUL), or -1 for all jobs.
+    // onlyMyLevel: only include recipes at or below `level`.
+    public void Run(int craftsmanship, int control, int cp, int level, int maxRecipes, int jobFilter, bool onlyMyLevel)
     {
         cts?.Cancel();
         cts = new CancellationTokenSource();
@@ -51,7 +53,7 @@ public sealed class CraftSimRunner : IDisposable
         Results = [];
         OnUpdated?.Invoke();
 
-        Task.Run(() => Execute(craftsmanship, control, cp, level, maxRecipes, ct), ct);
+        Task.Run(() => Execute(craftsmanship, control, cp, level, maxRecipes, jobFilter, onlyMyLevel, ct), ct);
     }
 
     public void Cancel()
@@ -61,20 +63,27 @@ public sealed class CraftSimRunner : IDisposable
         Status = "Cancelled.";
     }
 
-    private void Execute(int craftsmanship, int control, int cp, int level, int maxRecipes, CancellationToken ct)
+    private void Execute(int craftsmanship, int control, int cp, int level, int maxRecipes, int jobFilter, bool onlyMyLevel, CancellationToken ct)
     {
         try
         {
-            // Collect craftable recipes (deduped by result item), optionally capped.
+            // Collect craftable recipes (deduped by result item), filtered to the chosen
+            // job and (when "only my level") to recipes at or below the crafter level.
             var recipes = new List<(uint RecipeId, uint ItemId, string Name, int Lvl, int Job)>();
             var seen = new HashSet<uint>();
             foreach (var r in Service.DataManager.GetExcelSheet<Recipe>())
             {
+                var job = (int)r.CraftType.RowId;
+                if (jobFilter >= 0 && job != jobFilter) continue;
+
+                var lvl = (int)r.RecipeLevelTable.Value.ClassJobLevel;
+                if (onlyMyLevel && lvl > level) continue;
+
                 var itemId = r.ItemResult.RowId;
                 if (itemId == 0 || !seen.Add(itemId)) continue;
                 var name = r.ItemResult.ValueNullable?.Name.ExtractText() ?? "";
                 if (string.IsNullOrEmpty(name)) continue;
-                recipes.Add((r.RowId, itemId, name, (int)r.RecipeLevelTable.Value.ClassJobLevel, (int)r.CraftType.RowId));
+                recipes.Add((r.RowId, itemId, name, lvl, job));
             }
             recipes.Sort((a, b) => a.Lvl.CompareTo(b.Lvl));
             if (maxRecipes > 0 && recipes.Count > maxRecipes)

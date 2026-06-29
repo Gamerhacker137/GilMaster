@@ -12,18 +12,25 @@ namespace GilMaster.Windows.Tabs;
 /// </summary>
 public sealed class SimTab
 {
+    private static readonly string[] JobNames = ["All jobs", "Carpenter", "Blacksmith", "Armorer", "Goldsmith", "Leatherworker", "Weaver", "Alchemist", "Culinarian"];
     private int craftsmanship = 3800;
     private int control       = 3600;
     private int cp            = 600;
     private int level         = 100;
     private int maxRecipes    = 250;
+    private int jobSel        = 0;     // 0 = all; 1..8 = CRP..CUL
+    private bool onlyMyLevel  = true;  // only recipes at/below the level above
     private bool failuresOnly;
+    private bool initialised;
 
     public void Draw()
     {
         var sim = Plugin.CraftSim;
 
-        ImGui.TextWrapped("Run the crafting solver against recipes across the whole game and score it: " +
+        // First open: attune to the player's current job, level and stats.
+        if (!initialised) { initialised = true; ReadMyStats(); }
+
+        ImGui.TextWrapped("Run the crafting solver against recipes and score it: " +
                           "completed crafts earn points (full HQ = +10), failures lose points (-10).");
         ImGui.Separator();
 
@@ -39,11 +46,24 @@ public sealed class SimTab
         ImGui.SameLine();
         if (ImGui.Button("Use my character")) ReadMyStats();
 
+        // ── Scope: job + level ────────────────────────────────────────────
+        ImGui.SetNextItemWidth(150);
+        if (ImGui.BeginCombo("Job##sim", JobNames[jobSel]))
+        {
+            for (var i = 0; i < JobNames.Length; i++)
+                if (ImGui.Selectable(JobNames[i], i == jobSel)) jobSel = i;
+            ImGui.EndCombo();
+        }
+        ImGui.SameLine();
+        ImGui.Checkbox("Only my level (≤ level above)##sim", ref onlyMyLevel);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Only simulate recipes you can actually make at the level set above.\nUncheck to test the whole level range with these stats.");
+
         ImGui.SetNextItemWidth(120);
         ImGui.InputInt("Max recipes (0 = all)##sim", ref maxRecipes, 50, 250);
         if (maxRecipes < 0) maxRecipes = 0;
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Caps how many recipes to simulate, sampled evenly across the level range.\n0 = every craftable item in the game (slow — thousands of solves).");
+            ImGui.SetTooltip("Caps how many recipes to simulate, sampled evenly across the level range.\n0 = every matching recipe (slow if the scope is wide).");
 
         ImGui.Separator();
 
@@ -56,7 +76,7 @@ public sealed class SimTab
         }
         else
         {
-            if (ImGui.Button("Run simulation")) sim.Run(craftsmanship, control, cp, level, maxRecipes);
+            if (ImGui.Button("Run simulation")) sim.Run(craftsmanship, control, cp, level, maxRecipes, jobSel - 1, onlyMyLevel);
         }
         ImGui.SameLine();
         ImGui.TextDisabled(sim.Status);
@@ -132,6 +152,10 @@ public sealed class SimTab
                 if (ctl > 0) control = ctl;
                 cp = (int)player.MaxCp;
                 level = player.Level;
+
+                // If you're on a crafting job, scope the sim to it (ClassJob 8..15 = CRP..CUL).
+                var job = (int)player.ClassJob.RowId;
+                if (job is >= 8 and <= 15) jobSel = job - 7; // jobSel: 1..8 = CRP..CUL
             }
         }
         catch (Exception ex) { Service.Log.Warning(ex, "Sim: ReadMyStats failed"); }
