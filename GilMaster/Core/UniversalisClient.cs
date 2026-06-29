@@ -42,7 +42,7 @@ public sealed class UniversalisClient : IDisposable
         try
         {
             using var stream = await pipeline.ExecuteAsync(
-                async t => await client.GetStreamAsync($"{world}/{itemId}?listings=20&entries=20", t).ConfigureAwait(false),
+                async t => await client.GetStreamAsync($"{world}/{itemId}?listings=20&entries=80", t).ConfigureAwait(false),
                 ct).ConfigureAwait(false);
 
             return await JsonSerializer.DeserializeAsync<MarketDataResponse>(stream, cancellationToken: ct).ConfigureAwait(false);
@@ -79,7 +79,7 @@ public sealed class UniversalisClient : IDisposable
         try
         {
             using var stream = await pipeline.ExecuteAsync(
-                async t => await client.GetStreamAsync($"{world}/{joined}?listings=5&entries=20", t).ConfigureAwait(false),
+                async t => await client.GetStreamAsync($"{world}/{joined}?listings=5&entries=80", t).ConfigureAwait(false),
                 ct).ConfigureAwait(false);
 
             var response = await JsonSerializer.DeserializeAsync<MultiItemMarketDataResponse>(stream, cancellationToken: ct).ConfigureAwait(false);

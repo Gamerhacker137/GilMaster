@@ -104,8 +104,8 @@ public sealed class SellTab
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip(
                         $"Floor: NQ {r.FloorNq:N0}" + (r.FloorHq > 0 ? $" / HQ {r.FloorHq:N0}" : "")
-                        + $"\nGoing: NQ {r.GoingNq:N0}" + (r.GoingHq > 0 ? $" / HQ {r.GoingHq:N0}" : "")
-                        + $"\n{r.Sellers} listing(s) up · ~{r.Velocity:F1} sold/day"
+                        + $"\nGoing (7-day median): NQ {r.GoingNq:N0}" + (r.GoingHq > 0 ? $" / HQ {r.GoingHq:N0}" : "")
+                        + $"\n{r.Sellers} listing(s) up · ~{r.Sold7d} sold this week (~{r.Velocity:F1}/day)"
                         + (r.TrendDir != 0 ? $"\nPrice {(r.TrendDir > 0 ? "rising" : "falling")} ~{Math.Abs(r.TrendPct):F0}% recently" : "")
                         + "\n(right-click for more)");
                 DrawContextMenu(r);

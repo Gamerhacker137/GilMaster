@@ -110,6 +110,7 @@ public sealed class SellEngine : IDisposable
                     GoingHq  = md.RealisticPrice(true),
                     Sellers  = md.Listings.Count,
                     Velocity = md.SaleVelocity,
+                    Sold7d   = md.UnitsSold7d,
                     TrendDir = md.RecentTrend(m.Hq).Direction,
                     TrendPct = md.RecentTrend(m.Hq).Pct,
                 });

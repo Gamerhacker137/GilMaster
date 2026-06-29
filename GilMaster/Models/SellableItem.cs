@@ -17,6 +17,7 @@ public sealed class SellableItem
 
     public int    Sellers   { get; init; }   // active listings on the board
     public double Velocity  { get; init; }   // sales per day
+    public long   Sold7d    { get; init; }   // units sold in the last 7 days
 
     public sbyte  TrendDir  { get; init; }   // -1 falling, 0 flat, +1 rising
     public double TrendPct  { get; init; }

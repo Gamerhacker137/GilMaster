@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
@@ -56,22 +57,31 @@ public sealed class MarketDataResponse
 
     // ── Derived market signals ────────────────────────────────────────────────
 
+    private const long WeekSeconds = 7L * 24 * 3600;
+    private static long WeekAgo => DateTimeOffset.UtcNow.ToUnixTimeSeconds() - WeekSeconds;
+
     /// <summary>
-    /// A realistic unit sale price: the median of what the item ACTUALLY sold for
-    /// recently. Median ignores lowball undercuts and the odd overpriced flip, so it
-    /// reflects the going rate far better than the single cheapest listing (MinPrice).
-    /// Falls back to the current average, then the cheapest listing, if no sales exist.
+    /// A realistic unit sale price: the median of what the item ACTUALLY sold for over the
+    /// LAST 7 DAYS (not just the last sale). Median ignores lowball undercuts and the odd
+    /// overpriced flip, so it reflects the going rate far better than the cheapest listing.
+    /// If there are too few sales in the past week, it widens to all available history;
+    /// failing that, it falls back to the current average, then the cheapest listing.
     /// </summary>
     public long RealisticPrice(bool preferHq)
     {
-        IEnumerable<MarketDataRecentHistory> sales = RecentHistory.Where(h => h.PricePerUnit > 0);
+        IEnumerable<MarketDataRecentHistory> all = RecentHistory.Where(h => h.PricePerUnit > 0);
         if (preferHq)
         {
-            var hq = sales.Where(h => h.Hq).ToList();
-            if (hq.Count > 0) sales = hq;
+            var hq = all.Where(h => h.Hq).ToList();
+            if (hq.Count > 0) all = hq;
         }
+        var allList = all.ToList();
 
-        var prices = sales.Select(h => h.PricePerUnit).OrderBy(p => p).ToList();
+        // Prefer the past week; if it's thin (< 3 sales), use whatever history we have.
+        var week = allList.Where(h => h.Timestamp >= WeekAgo).ToList();
+        var use  = week.Count >= 3 ? week : allList;
+
+        var prices = use.Select(h => h.PricePerUnit).OrderBy(p => p).ToList();
         if (prices.Count > 0)
             return prices[prices.Count / 2]; // median
 
@@ -85,6 +95,9 @@ public sealed class MarketDataResponse
 
     /// <summary>Units actually sold across the recent-history window — a raw demand signal.</summary>
     public long RecentUnitsSold => RecentHistory?.Sum(h => h.Quantity) ?? 0;
+
+    /// <summary>Units sold in the last 7 days — the weekly demand signal.</summary>
+    public long UnitsSold7d => RecentHistory?.Where(h => h.Timestamp >= WeekAgo).Sum(h => h.Quantity) ?? 0;
 
     /// <summary>
     /// Recent price trend: compares the median of the newer half of recent sales against
