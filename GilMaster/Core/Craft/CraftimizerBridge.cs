@@ -83,14 +83,26 @@ public static class CraftimizerBridge
     /// condition/buffs instead of following a rotation planned blindly at step 1.
     /// </summary>
     public static List<ActionType> SolveFrom(SimulationState state, CancellationToken token = default)
-    {
-        // Craftimizer's macro-generation default (StepwiseGenetic, target HQ),
-        // with a capped thread count so the solve doesn't starve the game thread.
-        var config = SolverConfig.RecipeNoteDefault with
+        => SolveFromConfig(state, SolverConfig.RecipeNoteDefault with
         {
             MaxThreadCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
-        };
+        }, token);
 
+    // Time-bounded config for per-step live re-solves: it must land fast (well under the
+    // gap between craft actions) so the executor always acts on a FRESH decision instead of
+    // a stale plan. The full config is for the opening plan only.
+    private static readonly SolverConfig LiveConfig = SolverConfig.RecipeNoteDefault with
+    {
+        MaxThreadCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
+        MaxTimeMs      = 600,
+    };
+
+    /// <summary>Fast, time-bounded re-solve from the live mid-craft state (per-step decisions).</summary>
+    public static List<ActionType> SolveFromLive(SimulationState state, CancellationToken token = default)
+        => SolveFromConfig(state, LiveConfig, token);
+
+    private static List<ActionType> SolveFromConfig(SimulationState state, SolverConfig config, CancellationToken token)
+    {
         var solver = new CSolver(config, state) { Token = token };
         solver.Start();
         var solution = solver.GetSafeTask().GetAwaiter().GetResult();

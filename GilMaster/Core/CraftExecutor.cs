@@ -484,7 +484,7 @@ public sealed class CraftExecutor : IDisposable
 
         _pendingIsLive = true;
         _planStartedAt = DateTime.Now;
-        _planTask = Task.Run(() => CraftimizerBridge.SolveFrom(live));
+        _planTask = Task.Run(() => CraftimizerBridge.SolveFromLive(live));
         Service.Log.Debug(
             $"[GilMaster] Adaptive re-solve from live state: prog={st.Progress}/{st.MaxProgress} " +
             $"qual={st.Quality}/{st.MaxQuality} dur={st.Durability} cp={cp} cond={st.Condition} " +
