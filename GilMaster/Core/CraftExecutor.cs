@@ -343,6 +343,15 @@ public sealed class CraftExecutor : IDisposable
             return;
         }
 
+        // Wait for an in-flight adaptive re-solve for THIS step so we act on the FRESH plan,
+        // not the previous step's stale one. Without this, after the 2nd Basic Touch maxes
+        // quality, the executor would fire the old plan's next touch (a wasted action +
+        // durability) before the fresh "just synthesize" plan lands. Bounded (re-solves take
+        // ~tens of ms) so a slow solve can't stall the craft.
+        if (_pendingIsLive && _planTask is { IsCompleted: false }
+            && (DateTime.Now - _planStartedAt).TotalSeconds < 1.5)
+            return;
+
         if (next == null) return;
 
         var act         = next.Value;
@@ -474,6 +483,7 @@ public sealed class CraftExecutor : IDisposable
             cond, effects, _liveActionStates, (int)st.StepCount);
 
         _pendingIsLive = true;
+        _planStartedAt = DateTime.Now;
         _planTask = Task.Run(() => CraftimizerBridge.SolveFrom(live));
         Service.Log.Debug(
             $"[GilMaster] Adaptive re-solve from live state: prog={st.Progress}/{st.MaxProgress} " +
