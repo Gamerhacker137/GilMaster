@@ -56,9 +56,20 @@ public sealed class SimTab
             ImGui.EndCombo();
         }
         ImGui.SameLine();
-        ImGui.Checkbox("Only my level (≤ level above)##sim", ref onlyMyLevel);
+        ImGui.Checkbox("Only my level##sim", ref onlyMyLevel);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Only simulate recipes you can actually make at the level set above.\nUncheck to test the whole level range with these stats.");
+            ImGui.SetTooltip("Only simulate recipes within reach of the level set above (plus the craft-above-level buffer).");
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(140);
+        var buf = Plugin.Config.CraftLevelBuffer;
+        if (ImGui.InputInt("Craft above-level by##simbuf", ref buf, 1, 5))
+        {
+            Plugin.Config.CraftLevelBuffer = Math.Clamp(buf, 0, 50);
+            Plugin.Config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("FFXIV lets you craft recipes above your class level (with a penalty).\nThis is how many levels above still count as craftable — e.g. 7 means at lv18 you can make up to lv25.\nApplies to the Queue, 'What can I make?', and this sim.");
 
         ImGui.Checkbox("Keep trying for HQ (escalate + try other solvers)##sim", ref tryHard);
         if (ImGui.IsItemHovered())

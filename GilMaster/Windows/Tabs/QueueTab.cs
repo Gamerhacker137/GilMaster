@@ -208,7 +208,8 @@ public sealed class QueueTab
         var levelCache = new Dictionary<int, int>();
         int LvlFor(int jobId) => levelCache.TryGetValue(jobId, out var v)
             ? v : (levelCache[jobId] = CraftQueue.GetCrafterLevel(jobId));
-        var levelBlocked = queue.Entries.Where(e => LvlFor(e.JobId) < e.RecipeLevel).ToList();
+        var lvlBuffer = Plugin.Config.CraftLevelBuffer;
+        var levelBlocked = queue.Entries.Where(e => LvlFor(e.JobId) + lvlBuffer < e.RecipeLevel).ToList();
 
         // ── Crafting tree (main item first, sub-components nested underneath) ──
         ImGui.TextUnformatted("Crafting tree:");
@@ -474,7 +475,8 @@ public sealed class QueueTab
         var entry = queue.Entries.Find(e => e.ItemId == node.ItemId);
         var done  = node.IsCraftable ? (node.CraftCount == 0 || (entry?.IsComplete ?? false)) : node.Satisfied;
         var current     = node.ItemId == currentItemId;
-        var levelTooLow = node.IsCraftable && entry != null && lvlFor(entry.JobId) < node.RecipeLevel;
+        var levelTooLow = node.IsCraftable && entry != null
+            && lvlFor(entry.JobId) + Plugin.Config.CraftLevelBuffer < node.RecipeLevel;
 
         var color = levelTooLow      ? new Vector4(1f, 0.3f, 0.3f, 1f)  :
                     current          ? new Vector4(1f, 0.9f, 0.2f, 1f)  :

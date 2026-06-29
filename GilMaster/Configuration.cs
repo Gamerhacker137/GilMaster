@@ -56,6 +56,9 @@ public sealed class Configuration : IPluginConfiguration
     public bool ShowBasicRotationHints { get; set; } = true;
     public int CraftQuantity { get; set; } = 1;
     public bool UseHqMaterials { get; set; } = true; // auto-fill HQ mats before synthesizing
+    // You can craft recipes above your class level in FFXIV (with a penalty). This is how
+    // many levels above your level still count as craftable (e.g. lv18 + 7 → up to lv25).
+    public int CraftLevelBuffer { get; set; } = 7;
 
     // Auto-use food/potion before crafting (0 = none). HQ flags pick the HQ version.
     public int  FoodId    { get; set; }

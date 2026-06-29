@@ -332,7 +332,7 @@ public sealed class CraftQueue
         {
             foreach (var (itemId, ri) in _recipeIndex)
             {
-                if (levels.GetValueOrDefault(ri.JobId, 99) < ri.RecipeLevel) continue; // can't craft yet
+                if (levels.GetValueOrDefault(ri.JobId, 99) + Plugin.Config.CraftLevelBuffer < ri.RecipeLevel) continue; // out of reach even with the above-level allowance
                 var max = MaxMakeable(itemId);
                 if (max <= 0) continue;
                 results.Add(new CraftableSuggestion(itemId, GetItemName(itemId), ri.JobName, max));

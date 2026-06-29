@@ -77,7 +77,7 @@ public sealed class CraftSimRunner : IDisposable
                 if (jobFilter >= 0 && job != jobFilter) continue;
 
                 var lvl = (int)r.RecipeLevelTable.Value.ClassJobLevel;
-                if (onlyMyLevel && lvl > level) continue;
+                if (onlyMyLevel && lvl > level + Plugin.Config.CraftLevelBuffer) continue;
 
                 var itemId = r.ItemResult.RowId;
                 if (itemId == 0 || !seen.Add(itemId)) continue;
