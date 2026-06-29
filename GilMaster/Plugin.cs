@@ -55,8 +55,9 @@ public sealed class Plugin : IDalamudPlugin
         FlipEngine         = new FlipEngine();
         CraftSim           = new CraftSimRunner();
 
-        // Load last scan from disk so the list isn't empty on startup
+        // Load last scan + learned crafting rotations from disk
         ProfitEngine.TryLoadCache();
+        RotationCache.Load();
 
         mainWindow = new MainWindow();
         windowSystem.AddWindow(mainWindow);

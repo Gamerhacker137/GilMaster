@@ -148,7 +148,8 @@ public sealed class CraftSimRunner : IDisposable
             }
 
             Results = [.. results];
-            Status = $"Done — {Done} crafts, score {TotalScore:N0} ({HqCount} HQ, {FailedCount} failed); {RotationCache.Count} rotations learned for crafting";
+            RotationCache.Save(); // persist what we learned so it survives restarts
+            Status = $"Done — {Done} crafts, score {TotalScore:N0} ({HqCount} HQ, {FailedCount} failed); {RotationCache.Count} rotations saved for crafting";
         }
         catch (OperationCanceledException) { Status = "Cancelled."; }
         catch (Exception ex) { Service.Log.Error(ex, "CraftSim run failed"); Status = $"Error: {ex.Message}"; }

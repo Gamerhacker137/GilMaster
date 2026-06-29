@@ -86,6 +86,10 @@ public sealed class SimTab
         ImGui.SameLine();
         ImGui.TextDisabled(sim.Status);
 
+        ImGui.TextDisabled($"Saved rotations (used by the crafter): {Core.RotationCache.Count}");
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Clear##rotcache")) Core.RotationCache.Clear();
+
         // ── Scoreboard ────────────────────────────────────────────────────
         if (sim.Done > 0)
         {
