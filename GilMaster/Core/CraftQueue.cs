@@ -70,6 +70,8 @@ public sealed class CraftQueue
     public List<MissingMaterial>  Missing { get; } = [];
     // The top-level items the user asked for — roots of the display tree.
     public List<(uint ItemId, int Quantity)> Targets { get; private set; } = [];
+    // The crafting list this queue was built from (if any) — used to auto-remove GC lists.
+    public CraftList? SourceList { get; set; }
     public bool IsEmpty => Entries.Count == 0 && Missing.Count == 0;
 
     // ── Build the crafting queue for targetItemId × quantity ─────────────
@@ -90,6 +92,7 @@ public sealed class CraftQueue
     {
         Entries.Clear();
         Missing.Clear();
+        SourceList = null; // ListsTab sets this after building from a list
         Targets = targets.Where(t => t.ItemId != 0 && t.Quantity > 0).ToList();
         _recipeIndex ??= BuildRecipeIndex();
 

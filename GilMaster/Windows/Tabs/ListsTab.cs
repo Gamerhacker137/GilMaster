@@ -36,6 +36,11 @@ public sealed class ListsTab
         }
 
         ImGui.SameLine();
+        if (ImGui.Button("Add GC mission list")) AddGcMissionList();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Build a list from your Grand Company's daily crafting Supply missions.\nOpen the GC Supply window first (Personnel Officer). The list auto-removes itself\nonce you craft it from the Queue.");
+
+        ImGui.SameLine();
         ImGui.SetNextItemWidth(220);
         var preview = selectedListIndex >= 0 && selectedListIndex < lists.Count
             ? lists[selectedListIndex].Name : "(select a list)";
@@ -181,6 +186,7 @@ public sealed class ListsTab
             {
                 var q = Plugin.CraftQueue;
                 q.BuildMulti(Targets());
+                q.SourceList = list;
                 if (q.Entries.Count > 0 && q.Missing.Count == 0)
                 {
                     var n = artisan.CraftAll(q.Entries);
@@ -207,6 +213,7 @@ public sealed class ListsTab
             if (ImGui.SmallButton("Open in Queue"))
             {
                 Plugin.CraftQueue.BuildMulti(Targets());
+                Plugin.CraftQueue.SourceList = list;
                 MainWindow.SwitchToQueue();
             }
             if (ImGui.IsItemHovered())
@@ -217,6 +224,7 @@ public sealed class ListsTab
             if (ImGui.Button("Build & open Queue"))
             {
                 Plugin.CraftQueue.BuildMulti(Targets());
+                Plugin.CraftQueue.SourceList = list;
                 MainWindow.SwitchToQueue();
                 Service.ToastGui.ShowNormal($"Queued '{list.Name}' — check the Queue tab.");
             }
@@ -231,6 +239,29 @@ public sealed class ListsTab
             ImGui.SameLine();
             ImGui.TextDisabled("(queue is running)");
         }
+    }
+
+    // Build (or rebuild) the "GC mission" list from the open GC Supply window.
+    private void AddGcMissionList()
+    {
+        var items = GrandCompanyMission.ReadSupplyItems();
+        if (items.Count == 0)
+        {
+            Service.ToastGui.ShowError("No craftable GC mission items — open the GC Supply window (Personnel Officer) first.");
+            return;
+        }
+
+        var lists = Plugin.Config.CraftLists;
+        lists.RemoveAll(l => l.IsGcMission || l.Name == GrandCompanyMission.ListName);
+
+        var gc = new CraftList { Name = GrandCompanyMission.ListName, IsGcMission = true };
+        foreach (var (id, qty, name) in items)
+            gc.Items.Add(new CraftListItem { ItemId = id, Name = name, Quantity = qty });
+
+        lists.Add(gc);
+        selectedListIndex = lists.Count - 1;
+        Plugin.Config.Save();
+        Service.ToastGui.ShowNormal($"Built '{gc.Name}' from your GC missions ({gc.Items.Count} item(s)).");
     }
 
     // Add an item to a list, or bump its quantity if it's already there.

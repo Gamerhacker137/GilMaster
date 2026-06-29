@@ -19,6 +19,8 @@ public sealed class CraftList
 {
     public string Name { get; set; } = "New List";
     public List<CraftListItem> Items { get; set; } = [];
+    // Auto-created from a GC delivery mission — removes itself after a successful queue craft.
+    public bool IsGcMission { get; set; }
 }
 
 [Serializable]

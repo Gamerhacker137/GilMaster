@@ -101,6 +101,7 @@ public sealed class CraftQueueExecutor : IDisposable
                         CurrentState = State.Done;
                         StatusText   = "All done!";
                         Service.ToastGui.ShowNormal("[GilMaster] Crafting queue complete!");
+                        RemoveGcSourceList();
                         OnChanged?.Invoke();
                     }
                     else
@@ -185,7 +186,19 @@ public sealed class CraftQueueExecutor : IDisposable
         CurrentState = State.Done;
         StatusText   = "All done!";
         Service.ToastGui.ShowNormal("[GilMaster] Crafting queue complete!");
+        RemoveGcSourceList();
         OnChanged?.Invoke();
+    }
+
+    // A GC mission list removes itself once it's been crafted from the queue.
+    private static void RemoveGcSourceList()
+    {
+        var src = Plugin.CraftQueue.SourceList;
+        if (src is not { IsGcMission: true }) return;
+        Plugin.Config.CraftLists.Remove(src);
+        Plugin.Config.Save();
+        Plugin.CraftQueue.SourceList = null;
+        Service.ToastGui.ShowNormal($"GC mission crafted — removed the '{src.Name}' list.");
     }
 
     private static unsafe void SwitchJob(int jobId)
