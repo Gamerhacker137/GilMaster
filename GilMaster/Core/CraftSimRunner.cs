@@ -40,7 +40,7 @@ public sealed class CraftSimRunner : IDisposable
 
     // jobFilter: craft-type id 0..7 (CRP..CUL), or -1 for all jobs.
     // onlyMyLevel: only include recipes at or below `level`.
-    public void Run(int craftsmanship, int control, int cp, int level, int maxRecipes, int jobFilter, bool onlyMyLevel)
+    public void Run(int craftsmanship, int control, int cp, int level, int maxRecipes, int jobFilter, bool onlyMyLevel, bool tryHard)
     {
         cts?.Cancel();
         cts = new CancellationTokenSource();
@@ -53,7 +53,7 @@ public sealed class CraftSimRunner : IDisposable
         Results = [];
         OnUpdated?.Invoke();
 
-        Task.Run(() => Execute(craftsmanship, control, cp, level, maxRecipes, jobFilter, onlyMyLevel, ct), ct);
+        Task.Run(() => Execute(craftsmanship, control, cp, level, maxRecipes, jobFilter, onlyMyLevel, tryHard, ct), ct);
     }
 
     public void Cancel()
@@ -63,7 +63,7 @@ public sealed class CraftSimRunner : IDisposable
         Status = "Cancelled.";
     }
 
-    private void Execute(int craftsmanship, int control, int cp, int level, int maxRecipes, int jobFilter, bool onlyMyLevel, CancellationToken ct)
+    private void Execute(int craftsmanship, int control, int cp, int level, int maxRecipes, int jobFilter, bool onlyMyLevel, bool tryHard, CancellationToken ct)
     {
         try
         {
@@ -107,9 +107,10 @@ public sealed class CraftSimRunner : IDisposable
                 }
                 else
                 {
-                    var state = CraftimizerBridge.SolveStateFast(input, ct);
-                    if (state is { } st)
+                    var sol = CraftimizerBridge.SolveBest(input, tryHard, ct);
+                    if (sol is { } s)
                     {
+                        var st = s.State;
                         var maxProg = st.Input.Recipe.MaxProgress;
                         var maxQual = st.Input.Recipe.MaxQuality;
                         completed = st.Progress >= maxProg && maxProg > 0;
@@ -117,6 +118,10 @@ public sealed class CraftSimRunner : IDisposable
                         if (!completed) { score = -10; outcome = "FAIL"; }
                         else if (maxQual > 0) { score = hq / 10; outcome = hq >= 100 ? "HQ" : $"{hq}%"; }
                         else { score = 5; outcome = "DONE"; }
+
+                        // Feed what we learned back into real crafting: cache the rotation for
+                        // any craft we could complete (so the live crafter seeds from it).
+                        if (completed) RotationCache.Store(rec.RecipeId, s.Actions);
                     }
                     else { score = -10; outcome = "FAIL"; }
                 }
@@ -143,7 +148,7 @@ public sealed class CraftSimRunner : IDisposable
             }
 
             Results = [.. results];
-            Status = $"Done — {Done} crafts, score {TotalScore:N0} ({HqCount} HQ, {FailedCount} failed)";
+            Status = $"Done — {Done} crafts, score {TotalScore:N0} ({HqCount} HQ, {FailedCount} failed); {RotationCache.Count} rotations learned for crafting";
         }
         catch (OperationCanceledException) { Status = "Cancelled."; }
         catch (Exception ex) { Service.Log.Error(ex, "CraftSim run failed"); Status = $"Error: {ex.Message}"; }

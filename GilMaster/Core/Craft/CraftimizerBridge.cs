@@ -135,11 +135,59 @@ public static class CraftimizerBridge
     /// (progress / quality / HQ%), for offline benchmarking. Uses the fast config.
     /// </summary>
     public static SimulationState? SolveStateFast(SimulationInput input, CancellationToken token = default)
+        => SolveWith(input, FastConfig, token)?.State;
+
+    /// <summary>
+    /// Try to reach HQ, escalating effort and trying DIFFERENT search strategies until it
+    /// succeeds (or runs out of ideas): a fast pass first, then a heavier genetic search,
+    /// then the Raphael solver — keeping whichever attempt got the most quality. Returns the
+    /// best solver solution (its Actions are the rotation; State has progress/quality/HQ%).
+    /// </summary>
+    public static SolverSolution? SolveBest(SimulationInput input, bool tryHard, CancellationToken token = default)
     {
-        var solver = new CSolver(FastConfig, new SimulationState(input)) { Token = token };
+        var best = SolveWith(input, FastConfig, token);
+        if (!tryHard || IsFullHq(best)) return best;
+
+        best = Best(best, SolveWith(input, StrongConfig, token));   // heavier genetic search
+        if (IsFullHq(best)) return best;
+
+        best = Best(best, SolveWith(input, RaphaelConfig, token));  // a different algorithm
+        return best;
+    }
+
+    private static readonly SolverConfig StrongConfig = SolverConfig.RecipeNoteDefault with
+    {
+        MaxThreadCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
+        MaxTimeMs      = 6_000,
+    };
+
+    private static readonly SolverConfig RaphaelConfig = SolverConfig.EditorDefault with
+    {
+        MaxThreadCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
+        MaxTimeMs      = 6_000,
+    };
+
+    private static SolverSolution? SolveWith(SimulationInput input, SolverConfig config, CancellationToken token)
+    {
+        var solver = new CSolver(config, new SimulationState(input)) { Token = token };
         solver.Start();
-        var solution = solver.GetSafeTask().GetAwaiter().GetResult();
-        return solution is { } s ? s.State : null;
+        return solver.GetSafeTask().GetAwaiter().GetResult();
+    }
+
+    private static bool IsFullHq(SolverSolution? s)
+        => s is { } sol && sol.State.Input.Recipe.MaxQuality > 0
+        && sol.State.Progress >= sol.State.Input.Recipe.MaxProgress
+        && sol.State.Quality  >= sol.State.Input.Recipe.MaxQuality;
+
+    // Prefer a completed craft, then higher quality.
+    private static SolverSolution? Best(SolverSolution? a, SolverSolution? b)
+    {
+        if (a is not { } x) return b;
+        if (b is not { } y) return a;
+        var xc = x.State.Progress >= x.State.Input.Recipe.MaxProgress;
+        var yc = y.State.Progress >= y.State.Input.Recipe.MaxProgress;
+        if (xc != yc) return xc ? a : b;
+        return y.State.Quality > x.State.Quality ? b : a;
     }
 
     // ── Action execution mapping ───────────────────────────────────────────────

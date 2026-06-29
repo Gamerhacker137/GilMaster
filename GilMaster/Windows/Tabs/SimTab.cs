@@ -20,6 +20,7 @@ public sealed class SimTab
     private int maxRecipes    = 250;
     private int jobSel        = 0;     // 0 = all; 1..8 = CRP..CUL
     private bool onlyMyLevel  = true;  // only recipes at/below the level above
+    private bool tryHard      = true;  // escalate effort + try other algorithms to reach HQ
     private bool failuresOnly;
     private bool initialised;
 
@@ -59,6 +60,10 @@ public sealed class SimTab
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Only simulate recipes you can actually make at the level set above.\nUncheck to test the whole level range with these stats.");
 
+        ImGui.Checkbox("Keep trying for HQ (escalate + try other solvers)##sim", ref tryHard);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When a recipe doesn't reach HQ, retry with a heavier search and a different\nalgorithm to find a way. Slower, but learns better rotations — which the live\ncrafter then reuses. Completed rotations are cached for real crafting.");
+
         ImGui.SetNextItemWidth(120);
         ImGui.InputInt("Max recipes (0 = all)##sim", ref maxRecipes, 50, 250);
         if (maxRecipes < 0) maxRecipes = 0;
@@ -76,7 +81,7 @@ public sealed class SimTab
         }
         else
         {
-            if (ImGui.Button("Run simulation")) sim.Run(craftsmanship, control, cp, level, maxRecipes, jobSel - 1, onlyMyLevel);
+            if (ImGui.Button("Run simulation")) sim.Run(craftsmanship, control, cp, level, maxRecipes, jobSel - 1, onlyMyLevel, tryHard);
         }
         ImGui.SameLine();
         ImGui.TextDisabled(sim.Status);

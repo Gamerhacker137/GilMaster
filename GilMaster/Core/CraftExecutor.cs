@@ -295,7 +295,18 @@ public sealed class CraftExecutor : IDisposable
             if (currentRecipeId == 0)
                 currentRecipeId = DetectRecipeId(state);
             if (currentRecipeId != 0)
-                StartPlanAsync();
+            {
+                // Seed from a rotation the Sim bot learned for this recipe, so the craft
+                // starts instantly with a vetted line instead of waiting on a cold solve.
+                var learned = RotationCache.Get(currentRecipeId);
+                if (learned is { Length: > 0 })
+                {
+                    plannedRotation = learned;
+                    planStep        = 0;
+                    Service.Log.Information($"[GilMaster] Seeded from learned sim rotation ({learned.Length} steps) for recipe {currentRecipeId}.");
+                }
+                StartPlanAsync(); // still build _input + refine via adaptive re-solve
+            }
         }
 
         var buffs  = ReadBuffs();
