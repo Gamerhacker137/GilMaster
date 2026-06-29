@@ -193,6 +193,9 @@ public sealed class QueueTab
         // ── Materia extraction ────────────────────────────────────────────
         DrawMateriaSection();
 
+        // ── Food & potion auto-use ────────────────────────────────────────
+        DrawConsumablesSection();
+
         // ── Empty state ───────────────────────────────────────────────────
         if (queue.IsEmpty)
         {
@@ -360,6 +363,67 @@ public sealed class QueueTab
             // Was enabled but Allagan Tools is gone — counts silently fall back to bags.
             if (sameLine) ImGui.SameLine();
             ImGui.TextDisabled("(install Allagan Tools for retainer counts)");
+        }
+    }
+
+    // Food / potion picker — auto-applied before crafting (absorbed from Artisan).
+    private string foodSearch = "", potionSearch = "";
+    private string prevFood = "\0", prevPotion = "\0";
+    private List<(uint Id, string Name)> foodMatches = [], potionMatches = [];
+
+    private void DrawConsumablesSection()
+    {
+        var cfg = Plugin.Config;
+        if (!ImGui.CollapsingHeader("Food & potion (auto-use before crafting)")) return;
+
+        DrawConsumablePicker("Food", ref foodSearch, ref prevFood, ref foodMatches,
+            cfg.FoodId, cfg.FoodName, cfg.FoodHq,
+            (id, name) => { cfg.FoodId = (int)id; cfg.FoodName = name; cfg.Save(); },
+            hq => { cfg.FoodHq = hq; cfg.Save(); });
+
+        DrawConsumablePicker("Potion", ref potionSearch, ref prevPotion, ref potionMatches,
+            cfg.PotionId, cfg.PotionName, cfg.PotionHq,
+            (id, name) => { cfg.PotionId = (int)id; cfg.PotionName = name; cfg.Save(); },
+            hq => { cfg.PotionHq = hq; cfg.Save(); });
+
+        ImGui.TextDisabled("Leave blank for none. The item is used before each craft if the buff isn't active.");
+        ImGui.Separator();
+    }
+
+    private static void DrawConsumablePicker(string label, ref string search, ref string prev,
+        ref List<(uint Id, string Name)> matches, int curId, string curName, bool curHq,
+        Action<uint, string> onPick, Action<bool> onHq)
+    {
+        ImGui.TextDisabled($"{label}:");
+        ImGui.SameLine();
+        ImGui.TextColored(curId > 0 ? new Vector4(0.3f, 1f, 0.4f, 1f) : new Vector4(0.6f, 0.6f, 0.6f, 1f),
+            curId > 0 ? curName : "(none)");
+        if (curId > 0)
+        {
+            ImGui.SameLine();
+            var hq = curHq;
+            if (ImGui.Checkbox($"HQ##{label}hq", ref hq)) onHq(hq);
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"clear##{label}")) onPick(0, "");
+        }
+
+        ImGui.SetNextItemWidth(220);
+        ImGui.InputTextWithHint($"##{label}search", $"search {label.ToLower()}…", ref search, 64);
+        if (search != prev)
+        {
+            prev = search;
+            matches = search.Length >= 3 ? Core.FlipEngine.Search(search, 12) : [];
+        }
+        if (matches.Count > 0)
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(240);
+            if (ImGui.BeginCombo($"##{label}res", "(pick)"))
+            {
+                foreach (var (id, name) in matches)
+                    if (ImGui.Selectable(name)) { onPick(id, name); search = ""; prev = "\0"; }
+                ImGui.EndCombo();
+            }
         }
     }
 

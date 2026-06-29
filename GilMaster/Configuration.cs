@@ -57,6 +57,14 @@ public sealed class Configuration : IPluginConfiguration
     public int CraftQuantity { get; set; } = 1;
     public bool UseHqMaterials { get; set; } = true; // auto-fill HQ mats before synthesizing
 
+    // Auto-use food/potion before crafting (0 = none). HQ flags pick the HQ version.
+    public int  FoodId    { get; set; }
+    public bool FoodHq    { get; set; }
+    public string FoodName   { get; set; } = "";
+    public int  PotionId  { get; set; }
+    public bool PotionHq  { get; set; }
+    public string PotionName { get; set; } = "";
+
     // Auto-craft
     public bool EnableAutoCraft { get; set; } = false;
 

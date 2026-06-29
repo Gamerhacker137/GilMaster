@@ -1,5 +1,6 @@
 using Dalamud.Plugin.Services;
 using ECommons.UIHelpers.AddonMasterImplementations;
+using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -7,6 +8,7 @@ using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using GilMaster.Models;
 using System;
+using System.Linq;
 
 namespace GilMaster.Core;
 
@@ -178,6 +180,9 @@ public sealed class CraftStarter : IDisposable
             // Fill HQ materials, then press Synthesize — both via ECommons' proven
             // RecipeNote addon master (the foundation Artisan uses). Far more reliable
             // than scraping nodes ourselves.
+            // Apply food/potion first; if one was just used, wait for the buff before synth.
+            if (!EnsureConsumables()) return false;
+
             var master = new AddonMaster.RecipeNote(notePtr);
             if (Plugin.Config.UseHqMaterials) SelectHqMaterials(master);
             master.Synthesize();
@@ -201,6 +206,45 @@ public sealed class CraftStarter : IDisposable
                 master.Material(i, true);
         }
         catch (Exception ex) { Service.Log.Debug(ex, "[GilMaster] SelectHqMaterials failed"); }
+    }
+
+    // ── Food / potion (absorbed from Artisan's PreCrafting) ─────────────────
+    // Well Fed = status 48, Medicated = status 49. Returns true when both configured
+    // consumables are active (or none configured); false when one was just used (wait).
+    private static DateTime _lastConsume = DateTime.MinValue;
+
+    internal static bool EnsureConsumables()
+    {
+        var cfg = Plugin.Config;
+        var foodOk = UseConsumableIfNeeded(cfg.FoodId, cfg.FoodHq, 48);
+        var potOk  = UseConsumableIfNeeded(cfg.PotionId, cfg.PotionHq, 49);
+        return foodOk && potOk;
+    }
+
+    private static unsafe bool UseConsumableIfNeeded(int itemId, bool hq, uint buffId)
+    {
+        if (itemId <= 0) return true; // not configured
+
+        var player = Service.Objects.LocalPlayer;
+        if (player != null && player.StatusList.Any(s => s.StatusId == buffId)) return true; // active
+
+        if ((DateTime.Now - _lastConsume).TotalSeconds < 3.0) return false; // throttle item use
+
+        try
+        {
+            var inv = InventoryManager.Instance();
+            if (inv == null || inv->GetInventoryItemCount((uint)itemId, hq) <= 0) return true; // none to use
+
+            _lastConsume = DateTime.Now;
+            var agent = AgentInventoryContext.Instance();
+            if (agent != null)
+            {
+                agent->UseItem((uint)itemId + (hq ? 1_000_000u : 0));
+                Service.Log.Information($"[GilMaster] Using {(hq ? "HQ " : "")}consumable {itemId}");
+            }
+        }
+        catch (Exception ex) { Service.Log.Debug(ex, "[GilMaster] consumable use failed"); }
+        return false; // used (or tried) — wait for the buff
     }
 
     // ── Gearset helpers ──────────────────────────────────────────────────────
