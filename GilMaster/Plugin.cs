@@ -1,6 +1,7 @@
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
+using ECommons;
 using GilMaster.Core;
 using GilMaster.Windows;
 
@@ -33,6 +34,7 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin(IDalamudPluginInterface pi)
     {
         Service.Initialize(pi);
+        ECommonsMain.Init(pi, this); // addon-automation foundation (absorbed from Artisan)
 
         Config = Service.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
@@ -92,5 +94,6 @@ public sealed class Plugin : IDalamudPlugin
         CraftSim.Dispose();
         ProfitEngine.Dispose();
         Config.Save();
+        ECommonsMain.Dispose();
     }
 }

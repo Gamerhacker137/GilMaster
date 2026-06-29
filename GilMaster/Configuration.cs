@@ -55,6 +55,7 @@ public sealed class Configuration : IPluginConfiguration
     // Craft tab
     public bool ShowBasicRotationHints { get; set; } = true;
     public int CraftQuantity { get; set; } = 1;
+    public bool UseHqMaterials { get; set; } = true; // auto-fill HQ mats before synthesizing
 
     // Auto-craft
     public bool EnableAutoCraft { get; set; } = false;

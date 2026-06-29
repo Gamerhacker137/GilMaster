@@ -1,4 +1,5 @@
 using Dalamud.Plugin.Services;
+using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -170,55 +171,36 @@ public sealed class CraftStarter : IDisposable
         }
 
         var atkBase = (AtkUnitBase*)notePtr;
-        if (!atkBase->IsVisible)
-        {
-            Service.Log.Debug("[GilMaster] TryClickSynthesis: RecipeNote found but not visible");
-            return false;
-        }
-
-        // Log all enabled button nodes with their text labels to identify the Synthesize button
-        if (!synthNodesDumped)
-        {
-            synthNodesDumped = true;
-            var sb = new System.Text.StringBuilder("[GilMaster] RecipeNote buttons:");
-            for (var n = 0; n < atkBase->UldManager.NodeListCount; n++)
-            {
-                var node = atkBase->UldManager.NodeList[n];
-                if (node == null || !node->IsVisible()) continue;
-                var btn = node->GetAsAtkComponentButton();
-                if (btn == null) continue;
-                var label = btn->ButtonTextNode != null
-                    ? btn->ButtonTextNode->NodeText.ToString()
-                    : "";
-                sb.Append($" [{node->NodeId}:{(btn->IsEnabled ? "ON" : "off")}:\"{label}\"]");
-            }
-            Service.Log.Information(sb.ToString());
-        }
+        if (!atkBase->IsVisible) return false;
 
         try
         {
-            // Find the "Synthesize" button by its text label
-            for (var n = 0; n < atkBase->UldManager.NodeListCount; n++)
-            {
-                var node = atkBase->UldManager.NodeList[n];
-                if (node == null || !node->IsVisible()) continue;
-                var btn = node->GetAsAtkComponentButton();
-                if (btn == null || !btn->IsEnabled) continue;
-                if (btn->ButtonTextNode == null) continue;
-                var label = btn->ButtonTextNode->NodeText.ToString();
-                if (!label.Equals("Synthesize", StringComparison.OrdinalIgnoreCase)) continue;
-
-                atkBase->FireCallbackInt(8); // 8 = Synthesize callback ID in RecipeNote
-                Service.Log.Information($"[GilMaster] TryClickSynthesis: fired Synthesize (node {node->NodeId}, callback 8)");
-                return true;
-            }
-            Service.Log.Debug("[GilMaster] TryClickSynthesis: no Synthesize button found");
+            // Fill HQ materials, then press Synthesize — both via ECommons' proven
+            // RecipeNote addon master (the foundation Artisan uses). Far more reliable
+            // than scraping nodes ourselves.
+            var master = new AddonMaster.RecipeNote(notePtr);
+            if (Plugin.Config.UseHqMaterials) SelectHqMaterials(master);
+            master.Synthesize();
+            return true;
         }
         catch (Exception ex)
         {
             Service.Log.Debug(ex, "[GilMaster] Synthesis click attempt failed");
         }
         return false;
+    }
+
+    // Fill in HQ materials before synthesizing, via ECommons' RecipeNote master. We don't
+    // have the per-ingredient counts exposed, so we set each of the (max 6) ingredient
+    // slots to HQ — the game ignores slots that don't exist or have no HQ available.
+    private static void SelectHqMaterials(AddonMaster.RecipeNote master)
+    {
+        try
+        {
+            for (uint i = 0; i < 6; i++)
+                master.Material(i, true);
+        }
+        catch (Exception ex) { Service.Log.Debug(ex, "[GilMaster] SelectHqMaterials failed"); }
     }
 
     // ── Gearset helpers ──────────────────────────────────────────────────────

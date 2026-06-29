@@ -1,7 +1,7 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
     <AssemblyName>GilMaster</AssemblyName>
-    <Version>1.0.36</Version>
+    <Version>1.0.37</Version>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Platforms>x64</Platforms>
@@ -9,6 +9,9 @@
 
   <ItemGroup>
     <PackageReference Include="Polly.Core" Version="8.6.5" />
+    <!-- ECommons: the addon-automation foundation Artisan is built on (HQ-mat fill,
+         reliable synth start, button clicks). Absorbing Artisan's crafting chores. -->
+    <PackageReference Include="ECommons" Version="3.2.0.15" />
   </ItemGroup>
 
   <!-- Reference Craftimizer's real crafting simulator + solver (battle-tested MCTS). -->
