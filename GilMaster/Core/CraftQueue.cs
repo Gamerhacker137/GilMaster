@@ -236,6 +236,31 @@ public sealed class CraftQueue
         return ReadItemCount(itemId);
     }
 
+    // Bag-only count (NOT retainer-aware) — what you can actually craft with right now.
+    public static unsafe int GetBagItemCount(uint itemId)
+    {
+        try { return (int)InventoryManager.Instance()->GetInventoryItemCount(itemId); }
+        catch { return 0; }
+    }
+
+    // The first direct ingredient that's short for crafting `craftCount` synths of the
+    // recipe producing `itemResultId`, checked against bag inventory only (retainer items
+    // can't be used to craft). Returns null when every ingredient is present.
+    public (string Name, int Need, int Have)? FirstShortIngredient(uint itemResultId, int craftCount)
+    {
+        _recipeIndex ??= BuildRecipeIndex();
+        if (craftCount <= 0 || !_recipeIndex.TryGetValue(itemResultId, out var ri)) return null;
+
+        foreach (var (ingId, amt) in ri.Ingredients)
+        {
+            if (ingId == 0) continue;
+            var need = amt * craftCount;
+            var have = GetBagItemCount(ingId);
+            if (have < need) return (GetItemName(ingId), need, have);
+        }
+        return null;
+    }
+
     private static unsafe int ReadItemCount(uint itemId)
     {
         // When enabled, count the whole cross-character stash (active char + retainers

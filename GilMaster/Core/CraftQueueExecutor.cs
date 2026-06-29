@@ -139,6 +139,16 @@ public sealed class CraftQueueExecutor : IDisposable
 
         StatusText = $"[{index + 1}/{_queue.Count}] {entry.Name} ({entry.JobName})";
 
+        // Prerequisite check: make sure this entry's ingredients are actually in our bags
+        // before we open the recipe and arm the synth — otherwise it would just stall.
+        var shortIng = Plugin.CraftQueue.FirstShortIngredient(entry.ItemId, entry.QuantityToCraft);
+        if (shortIng is { } s)
+        {
+            Fail($"Missing {s.Need - s.Have}× {s.Name} for {entry.Name} (have {s.Have}/{s.Need}). " +
+                 "Craft the sub-components or gather/buy the materials first.");
+            return;
+        }
+
         var currentJob = Service.Objects.LocalPlayer?.ClassJob.RowId ?? 0;
         if (currentJob == (uint)entry.JobId)
         {
