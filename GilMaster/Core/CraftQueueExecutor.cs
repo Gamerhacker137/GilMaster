@@ -92,6 +92,14 @@ public sealed class CraftQueueExecutor : IDisposable
                 var ex     = Plugin.CraftExecutor.CurrentState;
                 var status = Plugin.CraftExecutor.StatusText;
 
+                if (ex == CraftExecutor.State.Failed)
+                {
+                    Fail($"Craft failed — '{_queue[CurrentIndex].Name}' ran out of durability before finishing. " +
+                         "FFXIV consumes the materials on a failed synthesis, so the batch is stopped rather than " +
+                         "advancing over lost mats. Check gear durability / rotation and retry.");
+                    break;
+                }
+
                 if (ex == CraftExecutor.State.Done)
                 {
                     _queue[CurrentIndex].QuantityCrafted = _queue[CurrentIndex].QuantityToCraft;

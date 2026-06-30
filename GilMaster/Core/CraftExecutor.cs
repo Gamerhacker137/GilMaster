@@ -57,7 +57,7 @@ public sealed class CraftExecutor : IDisposable
         public const uint GreatStrides = 260;
     }
 
-    public enum State { Idle, WaitingForSynth, Executing, Done }
+    public enum State { Idle, WaitingForSynth, Executing, Done, Failed }
 
     private int craftsRemaining;
     private DateTime lastActionAt = DateTime.MinValue;
@@ -95,6 +95,11 @@ public sealed class CraftExecutor : IDisposable
     private uint _stuckStep = uint.MaxValue;
     private DateTime _stepSeenAt = DateTime.MinValue;
     private const double StuckTimeout = 10.0;
+    // Completion tracking: the last valid synth state + whether progress ever reached max. A
+    // craft that ends WITHOUT reaching max progress failed (out of durability) — and FFXIV still
+    // consumes the materials — so it must not be counted as a successful craft.
+    private SynthState _lastValidState;
+    private bool _sawCompletion;
     // Combo/usage state, mutated as we execute planned actions, fed back into re-solves.
     private ActionStates _liveActionStates;
 
@@ -122,6 +127,8 @@ public sealed class CraftExecutor : IDisposable
         _lastResolveStep = 0;
         _firedStep       = uint.MaxValue;
         _liveActionStates = default;
+        _lastValidState  = default;
+        _sawCompletion   = false;
         CurrentState     = State.WaitingForSynth;
         StatusText       = $"Open crafting window and start synth (×{quantity})...";
         Service.Log.Information($"[GilMaster] Auto-craft armed for {quantity} craft(s), recipeId={recipeId}.");
@@ -140,6 +147,56 @@ public sealed class CraftExecutor : IDisposable
         OnChanged?.Invoke();
     }
 
+    // Called when the synthesis ends. Credits the craft (and advances to the next in the batch)
+    // ONLY when it actually completed — progress reached max. A durability-out FAILURE, or a user
+    // cancel, ends without max progress; FFXIV still consumes the materials, so counting it as a
+    // success would silently advance the queue over destroyed mats. On shortfall we go to Failed
+    // and let CraftQueueExecutor stop the batch instead of crediting it.
+    private void EndCurrentCraft()
+    {
+        var last      = _lastValidState;
+        bool completed = _sawCompletion
+            || (last.Valid && last.MaxProgress > 0 && last.Progress >= last.MaxProgress);
+        _sawCompletion  = false;
+        _lastValidState = default;
+        synthActive     = false;
+
+        if (!completed)
+        {
+            CurrentState = State.Failed;
+            StatusText   = "Craft did not complete (failed or cancelled) — not counted.";
+            Service.Log.Warning(
+                $"[GilMaster] Craft ended at progress {last.Progress}/{last.MaxProgress} without completing — " +
+                "treating as FAILED, not crediting the queue (materials are consumed on a failed synthesis).");
+            OnChanged?.Invoke();
+            return;
+        }
+
+        craftsRemaining--;
+        if (craftsRemaining <= 0)
+        {
+            CurrentState = State.Done;
+            StatusText   = "All crafts complete!";
+        }
+        else
+        {
+            CurrentState      = State.WaitingForSynth;
+            StatusText        = $"Craft done — start next synth ({craftsRemaining} left)...";
+            lastActionAt      = DateTime.Now;
+            waitingSince      = DateTime.MinValue;
+            plannedRotation   = null;
+            planStep          = 0;
+            _planTask         = null;
+            _input            = null;
+            _liveActionStates = default;
+            _lastResolveStep  = 0;
+            _firedStep        = uint.MaxValue;
+            CraftStarter.synthNodesDumped = false;
+        }
+        lastLoggedStep = uint.MaxValue;
+        OnChanged?.Invoke();
+    }
+
     private unsafe void Tick(IFramework fw)
     {
         var inCraft = Service.Condition[ConditionFlag.Crafting];
@@ -154,29 +211,7 @@ public sealed class CraftExecutor : IDisposable
             synthActive     = false;
 
             if (CurrentState == State.Executing)
-            {
-                craftsRemaining--;
-                if (craftsRemaining <= 0)
-                {
-                    CurrentState = State.Done;
-                    StatusText = "All crafts complete!";
-                }
-                else
-                {
-                    CurrentState    = State.WaitingForSynth;
-                    StatusText      = $"Craft done — start next synth ({craftsRemaining} left)...";
-                    waitingSince    = DateTime.MinValue;
-                    plannedRotation = null;
-                    planStep        = 0;
-                    _planTask       = null;
-                    _input          = null;
-                    _liveActionStates = default;
-                    _lastResolveStep = 0;
-                    _firedStep      = uint.MaxValue;
-                    CraftStarter.synthNodesDumped = false;
-                }
-                OnChanged?.Invoke();
-            }
+                EndCurrentCraft();
         }
 
         wasInCraft = inCraft;
@@ -195,35 +230,15 @@ public sealed class CraftExecutor : IDisposable
 
         var state = ReadSynthState();
         InSynthesis = state.Valid;
+        if (state.Valid)
+        {
+            _lastValidState = state;
+            if (state.MaxProgress > 0 && state.Progress >= state.MaxProgress) _sawCompletion = true;
+        }
         if (!state.Valid)
         {
             if (synthActive && CurrentState == State.Executing)
-            {
-                synthActive = false;
-                craftsRemaining--;
-                if (craftsRemaining <= 0)
-                {
-                    CurrentState = State.Done;
-                    StatusText = "All crafts complete!";
-                }
-                else
-                {
-                    CurrentState    = State.WaitingForSynth;
-                    StatusText      = $"Craft done — start next synth ({craftsRemaining} left)...";
-                    lastActionAt    = DateTime.Now;
-                    waitingSince    = DateTime.MinValue;
-                    plannedRotation = null;
-                    planStep        = 0;
-                    _planTask       = null;
-                    _input          = null;
-                    _liveActionStates = default;
-                    _lastResolveStep = 0;
-                    _firedStep      = uint.MaxValue;
-                    CraftStarter.synthNodesDumped = false;
-                }
-                lastLoggedStep    = uint.MaxValue;
-                OnChanged?.Invoke();
-            }
+                EndCurrentCraft();
 
             if (!loggedUnreadable)
             {
