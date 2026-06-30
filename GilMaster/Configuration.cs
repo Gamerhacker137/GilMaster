@@ -72,6 +72,11 @@ public sealed class Configuration : IPluginConfiguration
     public bool AutoRepair   { get; set; } = true;
     public int  RepairPercent { get; set; } = 30;
 
+    // Use the game's batch Quick Synthesis for NQ crafts of eligible recipes (much faster than
+    // the per-step loop). Only applies when "Prefer HQ" is off; falls back to the normal crafter
+    // if quick synth isn't available for the recipe.
+    public bool QuickSynthNq { get; set; } = true;
+
     // Auto-use food/potion before crafting (0 = none). HQ flags pick the HQ version.
     public int  FoodId    { get; set; }
     public bool FoodHq    { get; set; }

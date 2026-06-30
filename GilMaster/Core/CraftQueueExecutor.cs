@@ -16,7 +16,7 @@ namespace GilMaster.Core;
 /// </summary>
 public sealed class CraftQueueExecutor : IDisposable
 {
-    public enum State { Idle, Repairing, SwitchingJob, OpeningRecipe, Running, Done, Error }
+    public enum State { Idle, Repairing, SwitchingJob, OpeningRecipe, Running, QuickSynth, Done, Error }
 
     public State  CurrentState { get; private set; } = State.Idle;
     public string StatusText   { get; private set; } = "Idle";
@@ -124,6 +124,29 @@ public sealed class CraftQueueExecutor : IDisposable
                 // Give the recipe log a moment to open, then arm CraftExecutor
                 if ((DateTime.Now - _phaseStarted).TotalSeconds >= 1.5)
                     ArmExecutor();
+                break;
+            }
+
+            case State.QuickSynth:
+            {
+                var qty = _queue[CurrentIndex].QuantityToCraft;
+                var qs  = QuickSynth.Process(qty);
+                if (qs == QuickSynth.Status.Done)
+                {
+                    _queue[CurrentIndex].QuantityCrafted = _queue[CurrentIndex].QuantityToCraft;
+                    var next = CurrentIndex + 1;
+                    if (next >= _queue.Count) FinishQueue();
+                    else BeginEntry(next);
+                }
+                else if (qs == QuickSynth.Status.Unavailable)
+                {
+                    Service.Log.Information("[GilMaster] Quick synth not available for this recipe — using the normal crafter.");
+                    ArmNormalExecutor();
+                }
+                else if ((DateTime.Now - _phaseStarted).TotalSeconds > 600.0)
+                {
+                    Fail("Quick synth timed out.");
+                }
                 break;
             }
 
@@ -249,6 +272,19 @@ public sealed class CraftQueueExecutor : IDisposable
     }
 
     private void ArmExecutor()
+    {
+        var entry = _queue![CurrentIndex];
+        // NQ + a quick-synth-eligible recipe → use the game's fast batch Quick Synthesis.
+        if (!Plugin.Config.PreferHq && Plugin.Config.QuickSynthNq && QuickSynth.CanQuickSynth(entry.RecipeId))
+        {
+            QuickSynth.Reset();
+            SetState(State.QuickSynth, $"Quick-synthing {entry.Name} ×{entry.QuantityToCraft}...");
+            return;
+        }
+        ArmNormalExecutor();
+    }
+
+    private void ArmNormalExecutor()
     {
         var entry = _queue![CurrentIndex];
         Plugin.CraftExecutor.Start(entry.QuantityToCraft, entry.RecipeId);

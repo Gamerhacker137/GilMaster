@@ -152,6 +152,13 @@ public sealed class QueueTab
             if (ImGui.InputInt("%##qrepairpct", ref rp, 5, 10)) { Plugin.Config.RepairPercent = Math.Clamp(rp, 1, 99); Plugin.Config.Save(); }
         }
 
+        // Quick-synth NQ crafts (only matters when Prefer HQ is off).
+        ImGui.SameLine();
+        var qsnq = Plugin.Config.QuickSynthNq;
+        if (ImGui.Checkbox("Quick-synth NQ##qqs", ref qsnq)) { Plugin.Config.QuickSynthNq = qsnq; Plugin.Config.Save(); }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("For NQ crafts (when 'Prefer HQ' is off), use the game's fast batch Quick Synthesis\nfor recipes that support it, instead of crafting them one action at a time.");
+
         if (makeableResults.Count > 0)
         {
             ImGui.SameLine();
