@@ -1,5 +1,9 @@
 using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling;
+using Dalamud.Game.Text.SeStringHandling.Payloads;
 using GilMaster.Core;
+using GilMaster.Models;
 using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
@@ -231,7 +235,7 @@ public sealed class QueueTab
             ImGui.TextColored(new Vector4(1f, 0.45f, 0.35f, 1f), "Need to gather or buy:");
             ImGui.Indent();
             foreach (var m in queue.Missing)
-                ImGui.TextColored(new Vector4(1f, 0.55f, 0.45f, 1f), $"{m.Quantity}x  {m.Name}");
+                DrawMissingRow(m);
             ImGui.Unindent();
         }
 
@@ -505,6 +509,94 @@ public sealed class QueueTab
                 DrawTreeNode(child, queue, currentItemId, lvlFor, ref uid);
             ImGui.TreePop();
         }
+    }
+
+    // ── "Where do I get this?" actions for a missing material ──────────────
+
+    // One missing-material line plus quick actions: flag the gather node on the map (and hand
+    // it to GatherBuddy), show the NPC price when a vendor sells it, or a market-board link —
+    // so every "need to gather or buy" item answers "where?" in one click.
+    private static void DrawMissingRow(MissingMaterial m)
+    {
+        ImGui.PushID((int)m.ItemId);
+        ImGui.TextColored(new Vector4(1f, 0.55f, 0.45f, 1f), $"{m.Quantity}x  {m.Name}");
+
+        var nodes       = Plugin.GatheringLocator.GetNodesForItem(m.ItemId);
+        var vendorPrice = VendorPrices.Get(m.ItemId);
+
+        // Gatherable → flag the best node on the map (and optional GatherBuddy hand-off).
+        if (nodes.Count > 0)
+        {
+            var best = BestNode(nodes);
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Where to gather")) OpenGatherMap(best);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Flag the map at {best.ZoneName} (X:{best.DisplayX:F1} Y:{best.DisplayY:F1}) lv{best.RequiredLevel}." +
+                                 (best.IsTimed ? $"\nTimed node — {NodeUptime.LiveLabel(best.UptimeBitfield)}." : ""));
+
+            if (GatherBuddyBridge.IsAvailable)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Gath")) GatherBuddyBridge.Gather(m.Name);
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Tell GatherBuddy to gather {m.Name}.");
+            }
+        }
+
+        // NPC vendor → show it's buyable + the price; flag the vendor on the map when we know
+        // where it stands, else fall back to linking the item in chat.
+        if (vendorPrice > 0)
+        {
+            ImGui.SameLine();
+            var vloc = VendorLocations.Get(m.ItemId);
+            if (ImGui.SmallButton($"Buy from NPC · {vendorPrice:N0}g"))
+            {
+                if (!VendorLocations.OpenMap(m.ItemId)) LinkItemInChat(m.ItemId, m.Name);
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(vloc is { } loc
+                    ? $"{loc.Npc} — {loc.Zone} (X:{loc.X:F1} Y:{loc.Y:F1}) sells this for {vendorPrice:N0}g each " +
+                      $"({vendorPrice * m.Quantity:N0}g for {m.Quantity}).\nClick to flag the vendor on your map."
+                    : $"An NPC vendor sells this for {vendorPrice:N0}g each ({vendorPrice * m.Quantity:N0}g for {m.Quantity}).\n" +
+                      "No fixed map location (instanced NPC) — click to link it in chat.");
+        }
+
+        // Otherwise it's a market-board buy.
+        if (nodes.Count == 0 && vendorPrice == 0)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Market board"))
+                Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{m.ItemId}");
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Buy from the market board — open this item on Universalis.");
+        }
+
+        ImGui.PopID();
+    }
+
+    // Best node to flag: prefer one gatherable right now, then the lowest level.
+    private static GatherNode BestNode(IReadOnlyList<GatherNode> nodes) => nodes
+        .OrderBy(n => (!n.IsTimed || NodeUptime.LiveStatus(n.UptimeBitfield).IsUp) ? 0 : 1)
+        .ThenBy(n => n.RequiredLevel)
+        .First();
+
+    private static void OpenGatherMap(GatherNode node)
+    {
+        try
+        {
+            var payload = new MapLinkPayload(node.TerritoryId, node.MapId, node.RawX, node.RawZ);
+            Service.GameGui.OpenMapWithMapLink(payload);
+        }
+        catch (Exception ex) { Service.Log.Warning(ex, "Failed to open gather map link"); }
+    }
+
+    private static void LinkItemInChat(uint itemId, string name)
+    {
+        try
+        {
+            var s = new SeString(new ItemPayload(itemId, false),
+                new TextPayload($"{(char)SeIconChar.LinkMarker}{name}"), RawPayload.LinkTerminator);
+            Service.ChatGui.Print(s);
+        }
+        catch (Exception ex) { Service.Log.Warning(ex, "link item failed"); }
     }
 
     // ── Craftable item index ──────────────────────────────────────────────

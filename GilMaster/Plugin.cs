@@ -62,6 +62,10 @@ public sealed class Plugin : IDalamudPlugin
         ProfitEngine.TryLoadCache();
         RotationCache.Load();
 
+        // Warm the vendor price + location indexes off-thread (full-sheet scans of GilShopItem /
+        // ENpcBase / Level) so the Queue tab's "Buy from NPC" buttons never hitch on first use.
+        System.Threading.Tasks.Task.Run(() => { _ = VendorPrices.Count; _ = VendorLocations.Count; });
+
         mainWindow = new MainWindow();
         windowSystem.AddWindow(mainWindow);
         // Anchored button on the native GC Delivery Missions window (drawn via windowSystem.Draw).
