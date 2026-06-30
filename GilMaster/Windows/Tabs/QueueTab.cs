@@ -467,34 +467,102 @@ public sealed class QueueTab
             }
         }
 
-        // NPC vendor → show it's buyable + the price; flag the vendor on the map when we know
-        // where it stands, else fall back to linking the item in chat.
+        // ── Smart sourcing: NPC in your current city > an unlocked-city NPC, compared to the
+        // cheapest world on the board. Market-only items just get the cheapest world.
         if (vendorPrice > 0)
         {
-            ImGui.SameLine();
-            var vloc = VendorLocations.Get(m.ItemId);
-            if (ImGui.SmallButton($"Buy from NPC · {vendorPrice:N0}g"))
-            {
-                if (!VendorLocations.OpenMap(m.ItemId)) LinkItemInChat(m.ItemId, m.Name);
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip(vloc is { } loc
-                    ? $"{loc.Npc} — {loc.Zone} (X:{loc.X:F1} Y:{loc.Y:F1}) sells this for {vendorPrice:N0}g each " +
-                      $"({vendorPrice * m.Quantity:N0}g for {m.Quantity}).\nClick to flag the vendor on your map."
-                    : $"An NPC vendor sells this for {vendorPrice:N0}g each ({vendorPrice * m.Quantity:N0}g for {m.Quantity}).\n" +
-                      "No fixed map location (instanced NPC) — click to link it in chat.");
-        }
+            var vend  = VendorSourcing.ResolveVendor(m.ItemId);
+            var board = GetBoard(m.ItemId, out var fetching);
+            bool boardCheaper = board is { } b && vend is { } vv && b.Price < vv.Price;
 
-        // Otherwise it's a market-board buy.
-        if (nodes.Count == 0 && vendorPrice == 0)
-        {
             ImGui.SameLine();
-            if (ImGui.SmallButton("Market board"))
-                Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{m.ItemId}");
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Buy from the market board — open this item on Universalis.");
+            if (vend is { } v && (v.IsCurrentCity || !boardCheaper))
+            {
+                var label = v.IsCurrentCity ? $"Buy NPC here · {v.Price:N0}g" : $"Buy NPC · {v.City} · {v.Price:N0}g";
+                if (ImGui.SmallButton($"{label}##src{m.ItemId}"))
+                {
+                    var loc = VendorLocations.GetAll(m.ItemId).FirstOrDefault(l => l.TerritoryId == v.TerritoryId);
+                    if (loc.TerritoryId == 0 || !VendorLocations.OpenMap(loc)) LinkItemInChat(m.ItemId, m.Name);
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    var where = v.IsCurrentCity ? "your current city — no travel"
+                              : v.IsUnlocked == true ? "a city you've unlocked"
+                              : v.IsUnlocked == false ? "a city you haven't unlocked yet"
+                              : "unlocked status unknown";
+                    var cmp = board is { } bb ? $"\nMarket board cheapest: {bb.World} @ {bb.Price:N0}g."
+                            : fetching ? "\n(checking the market board…)" : "";
+                    ImGui.SetTooltip($"{v.Npc} in {v.City} ({where}) — {v.Price:N0}g each " +
+                                     $"({v.Price * m.Quantity:N0}g for {m.Quantity}).{cmp}\nClick to flag the vendor on your map.");
+                }
+            }
+            else if (board is { } bs)
+            {
+                if (ImGui.SmallButton($"Buy MB · {bs.World} · {bs.Price:N0}g##src{m.ItemId}"))
+                    Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{m.ItemId}");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Cheaper on the market board: {bs.World} @ {bs.Price:N0}g " +
+                                     (vend is { } vp ? $"(vs NPC {vp.Price:N0}g in {vp.City}). " : "") + "Click to open on Universalis.");
+            }
+            else
+            {
+                if (ImGui.SmallButton($"Buy from NPC · {vendorPrice:N0}g##src{m.ItemId}")) LinkItemInChat(m.ItemId, m.Name);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"An NPC vendor sells this for {vendorPrice:N0}g each." + (fetching ? "\n(checking the market board…)" : ""));
+            }
+        }
+        else if (nodes.Count == 0)
+        {
+            // Market-only: find the cheapest world to buy it.
+            var board = GetBoard(m.ItemId, out var fetching);
+            ImGui.SameLine();
+            if (board is { } bs)
+            {
+                if (ImGui.SmallButton($"Buy MB · {bs.World} · {bs.Price:N0}g##src{m.ItemId}"))
+                    Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{m.ItemId}");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Cheapest on your datacenter: {bs.World} @ {bs.Price:N0}g each ({bs.Price * m.Quantity:N0}g for {m.Quantity}).\nClick to open on Universalis.");
+            }
+            else
+            {
+                if (ImGui.SmallButton($"Market board##src{m.ItemId}"))
+                    Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{m.ItemId}");
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(fetching ? "Finding the cheapest world…" : "Buy from the market board — open on Universalis.");
+            }
         }
 
         ImGui.PopID();
+    }
+
+    // On-demand cheapest-world board prices for missing materials (one fetch per item, cached
+    // for the session). Null cached value = fetched but no listings.
+    private static readonly Dictionary<uint, BoardSource?> _boardCache = new();
+    private static readonly HashSet<uint> _boardFetching = new();
+
+    private static BoardSource? GetBoard(uint itemId, out bool fetching)
+    {
+        if (_boardCache.TryGetValue(itemId, out var cached)) { fetching = false; return cached; }
+        fetching = true;
+        if (!_boardFetching.Add(itemId)) return null; // already in flight
+        var dc = GetDcName();
+        if (string.IsNullOrEmpty(dc)) { _boardFetching.Remove(itemId); return null; }
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            try { _boardCache[itemId] = await VendorSourcing.CheapestWorldOnDc(itemId, dc); }
+            catch { _boardCache[itemId] = null; }
+            finally { _boardFetching.Remove(itemId); }
+        });
+        return null;
+    }
+
+    private static string GetDcName()
+    {
+        try
+        {
+            return Service.PlayerState.ContentId == 0 ? ""
+                : Service.PlayerState.CurrentWorld.Value.DataCenter.Value.Name.ExtractText();
+        }
+        catch { return ""; }
     }
 
     // Best node to flag: prefer one gatherable right now, then the lowest level.

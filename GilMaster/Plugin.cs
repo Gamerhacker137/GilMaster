@@ -26,6 +26,8 @@ public sealed class Plugin : IDalamudPlugin
     public static CraftSimRunner     CraftSim           { get; private set; } = null!;
     public static FurnitureEngine    FurnitureEngine    { get; private set; } = null!;
     public static GearEngine         GearEngine         { get; private set; } = null!;
+    public static GatherProfitEngine GatherProfitEngine { get; private set; } = null!;
+    public static UniversalisClient  Universalis        { get; private set; } = null!; // shared client for on-demand price compares
 
     private readonly WindowSystem windowSystem = new("GilMaster");
     private readonly MainWindow mainWindow;
@@ -60,6 +62,8 @@ public sealed class Plugin : IDalamudPlugin
         CraftSim           = new CraftSimRunner();
         FurnitureEngine    = new FurnitureEngine();
         GearEngine         = new GearEngine();
+        GatherProfitEngine = new GatherProfitEngine();
+        Universalis        = new UniversalisClient();
 
         // Load last scan + learned crafting rotations from disk
         ProfitEngine.TryLoadCache();
@@ -112,6 +116,8 @@ public sealed class Plugin : IDalamudPlugin
         FlipEngine.Dispose();
         CraftSim.Dispose();
         FurnitureEngine.Dispose();
+        GatherProfitEngine.Dispose();
+        Universalis.Dispose();
         ProfitEngine.Dispose();
         Config.Save();
         ECommonsMain.Dispose();

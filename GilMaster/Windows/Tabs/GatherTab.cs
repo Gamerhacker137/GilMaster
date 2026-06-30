@@ -25,6 +25,11 @@ public sealed class GatherTab
     private List<GatherNode> materialNodes = [];
     private static Dictionary<uint, string>? gatherableNames;
 
+    // "Best to gather at my level" profit scanner state.
+    private int profitJob;             // 0 = Both, 1 = Miner, 2 = Botanist
+    private int profitMinSold;         // hide gatherables selling fewer than this per week
+    private static readonly string[] ProfitJobs = ["Both", "Miner", "Botanist"];
+
     public void SetTarget(ProfitableItem item)
     {
         targetItem = item;
@@ -84,10 +89,22 @@ public sealed class GatherTab
     private static int MinutesToUp(GatherNode n)
         => n.IsTimed ? NodeUptime.LiveStatus(n.UptimeBitfield).MinutesToChange : 0;
 
-    // Prefer a node available right now (lowest level among those); otherwise the timed
-    // node coming up soonest.
+    // ── Player gathering levels (Miner = ClassJob 16, Botanist = 17) ───────────
+    // GetCrafterLevel returns 99 when not logged in, so nothing is falsely hidden.
+    private static int MinerLvl    => CraftQueue.GetCrafterLevel(16);
+    private static int BotanistLvl => CraftQueue.GetCrafterLevel(17);
+
+    // The level the player has for whichever job a node needs.
+    private static int MyLevelFor(GatherNode n) => n.GatheringType is 0 or 1 ? MinerLvl : BotanistLvl;
+
+    // Can the player actually gather this node right now (high enough level for its job)?
+    private static bool Reachable(GatherNode n) => n.RequiredLevel <= MyLevelFor(n);
+
+    // Prefer a node we can gather right now AND have the level for; then any available-now
+    // (lowest level); then the timed node coming up soonest; finally the lowest-level node.
     private static GatherNode PickBestNode(IReadOnlyList<GatherNode> nodes)
     {
+        GatherNode? bestReady = null; var bestReadyLvl = int.MaxValue;
         GatherNode? bestAvail = null; var bestAvailLvl = int.MaxValue;
         GatherNode? bestSoon  = null; var bestSoonMins = int.MaxValue;
 
@@ -95,6 +112,7 @@ public sealed class GatherTab
         {
             if (AvailableNow(n))
             {
+                if (Reachable(n) && n.RequiredLevel < bestReadyLvl) { bestReady = n; bestReadyLvl = n.RequiredLevel; }
                 if (n.RequiredLevel < bestAvailLvl) { bestAvail = n; bestAvailLvl = n.RequiredLevel; }
             }
             else
@@ -104,12 +122,16 @@ public sealed class GatherTab
             }
         }
 
-        return bestAvail ?? bestSoon ?? nodes.OrderBy(n => n.RequiredLevel).First();
+        return bestReady ?? bestAvail ?? bestSoon ?? nodes.OrderBy(n => n.RequiredLevel).First();
     }
 
     public void Draw()
     {
         var config = Plugin.Config;
+
+        // "What's worth gathering at my level right now?" — the headline gather feature.
+        DrawProfitScanner();
+        ImGui.Separator();
 
         // Standalone node finder — type any gatherable and see its best node.
         DrawMaterialSearch();
@@ -222,6 +244,15 @@ public sealed class GatherTab
                         $"[{NodeUptime.LiveLabel(node.UptimeBitfield)}]");
                 }
 
+                // Over-level warning — you don't have the gathering level for this node yet.
+                if (!Reachable(node))
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), $"(needs lv{node.RequiredLevel})");
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"Your {(node.GatheringType is 0 or 1 ? "Miner" : "Botanist")} is level {MyLevelFor(node)} — this node needs {node.RequiredLevel}.");
+                }
+
                 ImGui.TableSetColumnIndex(1);
                 ImGui.Text(node.QuantityNeeded.ToString());
 
@@ -301,6 +332,175 @@ public sealed class GatherTab
             }
         }
         ImGui.Spacing();
+    }
+
+    // ── "Best to gather at my level" profit scanner ───────────────────────────
+    private void DrawProfitScanner()
+    {
+        var engine = Plugin.GatherProfitEngine;
+        var target = GetTarget();
+
+        if (!ImGui.CollapsingHeader("Best to gather at my level", ImGuiTreeNodeFlags.DefaultOpen))
+            return;
+
+        ImGui.TextWrapped("What raw materials are worth farming right now — only nodes your Miner/Botanist " +
+                          "can reach, ranked by revenue/week (price × weekly demand on the board).");
+
+        ImGui.SetNextItemWidth(110);
+        if (ImGui.BeginCombo("Job##gpjob", ProfitJobs[profitJob]))
+        {
+            for (var i = 0; i < ProfitJobs.Length; i++)
+                if (ImGui.Selectable(ProfitJobs[i], i == profitJob)) profitJob = i;
+            ImGui.EndCombo();
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled($"(MIN {MinerLvl} · BTN {BotanistLvl})");
+
+        ImGui.SameLine();
+        var disabled = engine.IsScanning || string.IsNullOrEmpty(target);
+        if (disabled) ImGui.BeginDisabled();
+        if (ImGui.Button(engine.IsScanning ? "Scanning...##gp" : "Scan##gp"))
+        {
+            var jobFilter = profitJob switch { 1 => 0, 2 => 1, _ => -1 };
+            engine.Scan(target, jobFilter, MinerLvl, BotanistLvl);
+        }
+        if (disabled) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Price every gatherable you can reach on " +
+                             (string.IsNullOrEmpty(target) ? "your world" : target) + ".");
+
+        ImGui.SameLine();
+        ImGui.TextDisabled(Plugin.Config.ScanDatacenter ? "[DC]" : "[World]");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Scan scope (change in Settings ▸ Scanning): " +
+                (Plugin.Config.ScanDatacenter ? "whole datacenter" : "your home world"));
+
+        if (engine.IsScanning)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel##gp")) engine.Cancel();
+            ImGui.SameLine();
+            ImGui.ProgressBar(engine.Progress, new Vector2(140, 0));
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled(engine.Status);
+
+        if (string.IsNullOrEmpty(target))
+        {
+            ImGui.TextColored(new Vector4(1, 0.3f, 0.3f, 1), "Not logged in. Enter the game first.");
+            return;
+        }
+
+        ImGui.SetNextItemWidth(110);
+        ImGui.InputInt("Min sold/wk##gp", ref profitMinSold, 1, 10);
+        if (profitMinSold < 0) profitMinSold = 0;
+
+        var rows = engine.Results.Where(r => r.WeeklySold >= profitMinSold).ToList();
+        if (rows.Count == 0)
+        {
+            ImGui.TextDisabled(engine.IsScanning ? "Scanning..." : "No results yet — press \"Scan\".");
+            return;
+        }
+
+        if (ImGui.BeginTable("##gpresults", 7,
+            ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY,
+            new Vector2(0, 280)))
+        {
+            ImGui.TableSetupScrollFreeze(0, 1);
+            ImGui.TableSetupColumn("Item",    ImGuiTableColumnFlags.WidthStretch, 3);
+            ImGui.TableSetupColumn("Job",     ImGuiTableColumnFlags.WidthFixed, 36);
+            ImGui.TableSetupColumn("Lvl",     ImGuiTableColumnFlags.WidthFixed, 34);
+            ImGui.TableSetupColumn("Price",   ImGuiTableColumnFlags.WidthFixed, 74);
+            ImGui.TableSetupColumn("Sold/wk", ImGuiTableColumnFlags.WidthFixed, 62);
+            ImGui.TableSetupColumn("Rev/wk",  ImGuiTableColumnFlags.WidthFixed, 70);
+            ImGui.TableSetupColumn("##act",   ImGuiTableColumnFlags.WidthFixed, 150);
+            ImGui.TableHeadersRow();
+
+            foreach (var r in rows)
+            {
+                ImGui.TableNextRow();
+
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextUnformatted(r.Name);
+                if (r.TrendDir != 0)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextColored(r.TrendDir > 0 ? new Vector4(0.3f, 1f, 0.4f, 1f) : new Vector4(1f, 0.45f, 0.4f, 1f),
+                        r.TrendDir > 0 ? "↑" : "↓");
+                }
+
+                ImGui.TableSetColumnIndex(1);
+                ImGui.TextDisabled(r.JobName);
+
+                ImGui.TableSetColumnIndex(2);
+                ImGui.Text(r.RequiredLevel.ToString());
+
+                ImGui.TableSetColumnIndex(3);
+                ImGui.Text($"{r.GoingPrice:N0}");
+
+                ImGui.TableSetColumnIndex(4);
+                var cc = r.CompetitionTier switch
+                {
+                    1 => new Vector4(0.3f, 1f, 0.4f, 1f),
+                    2 => new Vector4(1f, 0.9f, 0.3f, 1f),
+                    3 => new Vector4(1f, 0.45f, 0.35f, 1f),
+                    _ => new Vector4(0.7f, 0.7f, 0.7f, 1f),
+                };
+                ImGui.TextColored(cc, r.WeeklySold.ToString());
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"{r.Sellers} seller{(r.Sellers == 1 ? "" : "s")} listed — {(r.CompetitionTier <= 1 ? "open market" : "watch for undercutting")}.");
+
+                ImGui.TableSetColumnIndex(5);
+                var rev = r.RevenuePerWeek;
+                var rc = rev > 5_000_000 ? new Vector4(0.3f, 1f, 0.4f, 1f) :
+                         rev >   500_000 ? new Vector4(1f, 0.9f, 0.3f, 1f) :
+                                           new Vector4(0.8f, 0.8f, 0.8f, 1f);
+                ImGui.TextColored(rc, rev >= 1_000_000 ? $"{rev / 1_000_000f:F1}M" : $"{rev / 1000f:F0}k");
+
+                ImGui.TableSetColumnIndex(6);
+                var node = NodeOf(r);
+                ImGui.PushID((int)r.ItemId);
+                if (r.AetheryteId != 0)
+                {
+                    if (ImGui.SmallButton("TP")) AetheryteData.Teleport(r.AetheryteId);
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Teleport to {r.Aetheryte ?? "the nearest aetheryte"}");
+                    ImGui.SameLine();
+                }
+                if (ImGui.SmallButton("Map")) OpenMap(node);
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Chat")) PrintToChat(node);
+                if (GatherBuddyBridge.IsAvailable)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton("Gath")) GatherBuddyBridge.Gather(r.Name);
+                }
+                ImGui.PopID();
+            }
+            ImGui.EndTable();
+        }
+    }
+
+    // A GatherProfitItem carries its best node's location — rebuild a GatherNode for the
+    // shared Map/Chat helpers.
+    private static GatherNode NodeOf(GatherProfitItem g) => new()
+    {
+        ItemId = g.ItemId, ItemName = g.Name, TerritoryId = g.TerritoryId, ZoneName = g.Zone,
+        PlaceName = g.Zone, GatheringType = g.GatheringType, RawX = g.RawX, RawZ = g.RawZ,
+        MapId = g.MapId, DisplayX = g.DisplayX, DisplayY = g.DisplayY, RequiredLevel = g.RequiredLevel,
+        UptimeBitfield = g.UptimeBitfield, ClosestAetheryteName = g.Aetheryte, AetheryteId = g.AetheryteId,
+    };
+
+    // Where to price gatherables: home world, or whole datacenter when ScanDatacenter is on.
+    private static string GetTarget()
+    {
+        if (Service.PlayerState.ContentId == 0) return string.Empty;
+        if (Plugin.Config.ScanDatacenter)
+        {
+            var d = Service.PlayerState.CurrentWorld.Value.DataCenter.Value.Name.ExtractText();
+            return string.IsNullOrEmpty(d) ? string.Empty : d;
+        }
+        return Service.Objects.LocalPlayer?.HomeWorld.Value.Name.ExtractText()
+               ?? Service.PlayerState.CurrentWorld.Value.Name.ExtractText();
     }
 
     // ── Standalone node finder ────────────────────────────────────────────────
@@ -394,7 +594,14 @@ public sealed class GatherTab
                 }
 
                 ImGui.TableSetColumnIndex(1);
-                ImGui.Text(node.RequiredLevel.ToString());
+                if (Reachable(node))
+                    ImGui.Text(node.RequiredLevel.ToString());
+                else
+                {
+                    ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), node.RequiredLevel.ToString());
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip($"Your {(node.GatheringType is 0 or 1 ? "Miner" : "Botanist")} is level {MyLevelFor(node)} — this node needs {node.RequiredLevel}.");
+                }
 
                 ImGui.TableSetColumnIndex(2);
                 ImGui.Text(node.DisplayX > 0 ? $"X:{node.DisplayX:F1} Y:{node.DisplayY:F1}" : "?");
@@ -438,7 +645,8 @@ public sealed class GatherTab
     {
         selectedMaterialId = id;
         materialNodes = Plugin.GatheringLocator.GetNodesForItem(id)
-            .OrderBy(n => AvailableNow(n) ? 0 : 1)
+            .OrderByDescending(Reachable)                      // nodes you can actually gather first
+            .ThenBy(n => AvailableNow(n) ? 0 : 1)
             .ThenBy(n => AvailableNow(n) ? 0 : MinutesToUp(n))
             .ThenBy(n => n.RequiredLevel)
             .ToList();

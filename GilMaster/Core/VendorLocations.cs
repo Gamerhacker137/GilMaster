@@ -37,8 +37,8 @@ public static class VendorLocations
         float X,             // nice map X coord (human-readable, e.g. 10.4)
         float Y);            // nice map Y coord
 
-    // itemId -> location. Built once and cached, exactly like VendorPrices._prices.
-    private static Dictionary<uint, VendorLocation>? _byItem;
+    // itemId -> all known vendor locations (one per city that sells it). Built once and cached.
+    private static Dictionary<uint, List<VendorLocation>>? _byItem;
 
     /// <summary>True if we know an on-map vendor location for this item.</summary>
     public static bool Has(uint itemId)
@@ -47,11 +47,18 @@ public static class VendorLocations
         return _byItem.ContainsKey(itemId);
     }
 
-    /// <summary>Vendor location for this item, or null if none has a known Level position.</summary>
+    /// <summary>The first known vendor location for this item, or null. (Used by the map flag.)</summary>
     public static VendorLocation? Get(uint itemId)
     {
         _byItem ??= Build();
-        return _byItem.TryGetValue(itemId, out var loc) ? loc : null;
+        return _byItem.TryGetValue(itemId, out var list) && list.Count > 0 ? list[0] : null;
+    }
+
+    /// <summary>Every known vendor location for this item (one per selling city).</summary>
+    public static IReadOnlyList<VendorLocation> GetAll(uint itemId)
+    {
+        _byItem ??= Build();
+        return _byItem.TryGetValue(itemId, out var list) ? list : [];
     }
 
     public static int Count { get { _byItem ??= Build(); return _byItem.Count; } }
@@ -60,10 +67,11 @@ public static class VendorLocations
     /// Flag the in-game map at this item's vendor. No-op (returns false) if there is no known
     /// Level location — the caller should fall back to a chat link in that case.
     /// </summary>
-    public static bool OpenMap(uint itemId)
+    public static bool OpenMap(uint itemId) => Get(itemId) is { } l && OpenMap(l);
+
+    /// <summary>Flag the in-game map at a specific resolved vendor location.</summary>
+    public static bool OpenMap(VendorLocation l)
     {
-        var loc = Get(itemId);
-        if (loc is not { } l) return false;
         try
         {
             // Float "nice coords" ctor: (territoryTypeId, mapId, niceX, niceY, fudge=0.05f).
@@ -79,9 +87,9 @@ public static class VendorLocations
         }
     }
 
-    private static Dictionary<uint, VendorLocation> Build()
+    private static Dictionary<uint, List<VendorLocation>> Build()
     {
-        var byItem = new Dictionary<uint, VendorLocation>();
+        var byItem = new Dictionary<uint, List<VendorLocation>>();
         try
         {
             var enpcBase  = Service.DataManager.GetExcelSheet<ENpcBase>();
@@ -126,14 +134,15 @@ public static class VendorLocations
                 if (!shopToVendor.TryGetValue(shopId, out var v)) continue; // shop has no mappable NPC
                 if (v.levelRowId == 0) continue;              // NPC has no Level row -> no map flag
 
-                var loc = ResolveLevel(levels, v.levelRowId, v.name);
-                if (loc is not { } resolved) continue;
+                if (ResolveLevel(levels, v.levelRowId, v.name) is not { } resolved) continue;
 
                 foreach (var sub in row)
                 {
                     var id = sub.Item.RowId;
-                    if (id == 0 || byItem.ContainsKey(id)) continue; // first vendor wins per item
-                    byItem[id] = resolved;
+                    if (id == 0) continue;
+                    if (!byItem.TryGetValue(id, out var list)) byItem[id] = list = [];
+                    // One entry per selling city (dedupe by territory).
+                    if (!list.Exists(e => e.TerritoryId == resolved.TerritoryId)) list.Add(resolved);
                 }
             }
 
