@@ -240,9 +240,16 @@ public sealed class CraftQueue
     }
 
     // Bag-only count (NOT retainer-aware) — what you can actually craft with right now.
+    // Counts BOTH NQ and HQ copies (GetInventoryItemCount defaults to NQ only), so an HQ
+    // sub-component in your bags still counts toward the requirement.
     public static unsafe int GetBagItemCount(uint itemId)
     {
-        try { return (int)InventoryManager.Instance()->GetInventoryItemCount(itemId); }
+        try
+        {
+            var inv = InventoryManager.Instance();
+            if (inv == null) return 0;
+            return (int)inv->GetInventoryItemCount(itemId) + (int)inv->GetInventoryItemCount(itemId, true);
+        }
         catch { return 0; }
     }
 
@@ -273,7 +280,13 @@ public sealed class CraftQueue
             var owned = Plugin.AllaganTools.CountOwned(itemId);
             if (owned >= 0) return (int)owned;
         }
-        try { return (int)InventoryManager.Instance()->GetInventoryItemCount(itemId); }
+        // Count BOTH NQ and HQ copies (default counts NQ only) — HQ mats satisfy the recipe too.
+        try
+        {
+            var inv = InventoryManager.Instance();
+            if (inv == null) return 0;
+            return (int)inv->GetInventoryItemCount(itemId) + (int)inv->GetInventoryItemCount(itemId, true);
+        }
         catch { return 0; }
     }
 

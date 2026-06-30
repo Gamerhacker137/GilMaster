@@ -398,21 +398,52 @@ public sealed class CraftExecutor : IDisposable
             return cond;
         }
 
-        // Follow the planned rotation — return the next planned action as-is. Do NOT skip
-        // it just because it isn't usable this instant: mid-animation the game reports the
-        // action as busy (status 579/571), which is normal — the fire loop simply waits and
-        // retries until it's usable, then fires it. (Skipping here caused the plan to burn
-        // through during one animation window and thrash.)
-        if (plannedRotation != null && planStep < plannedRotation.Length)
+        // Follow the planned rotation. We do NOT skip an action merely because it's busy this
+        // instant (status 579/571 mid-animation) — the fire loop waits and retries. But we DO
+        // skip an action the live state has rendered WASTEFUL: a stale Master's Mend at full
+        // durability, or a quality action once quality is already maxed. A re-solve computed at
+        // the previous step's state can carry such an action (e.g. it planned Master's Mend at
+        // durability 10, but by the time it's adopted the prior step already restored to 40) —
+        // firing it burns CP for nothing. This is the "CP hiccup at 40 durability". Wastefulness
+        // is a stable state check (not a transient busy status), so skipping it can't thrash.
+        if (plannedRotation != null)
         {
-            isOverride = false;
-            return ActionTypeToDef(plannedRotation[planStep]);
+            while (planStep < plannedRotation.Length)
+            {
+                var def = ActionTypeToDef(plannedRotation[planStep]);
+                if (def is { } d && !IsWastefulNow(d.BaseId, state))
+                {
+                    isOverride = false;
+                    return d;
+                }
+                if (def is { } w)
+                    Service.Log.Information(
+                        $"[GilMaster] Skipping wasteful {w.Label} (dur {state.Durability}/{state.MaxDurability}, " +
+                        $"qual {state.Quality}/{state.MaxQuality}) — saving CP.");
+                planStep++; // wasteful or unmappable → advance to the next planned action
+            }
         }
 
-        // Greedy fallback (only when there's no plan at all)
+        // Greedy fallback (no plan, or the rest of the plan was wasteful → just finish progress)
         isOverride = true;
         return DecideAction(state, buffs);
     }
+
+    // True when firing this action right now would waste CP given the live state — used to skip
+    // stale planned actions a re-solve carried over from the previous step.
+    private static bool IsWastefulNow(uint baseId, SynthState s)
+    {
+        // Master's Mend (+30 dur, 88 CP) at full durability: zero gain, pure waste.
+        if (baseId == Act.MastersMend && s.Durability >= s.MaxDurability) return true;
+        // Any quality action once quality is already maxed: nothing left to gain — just synthesise.
+        if (s.Quality >= s.MaxQuality && IsQualityAction(baseId)) return true;
+        return false;
+    }
+
+    private static bool IsQualityAction(uint baseId) => baseId is
+        Act.BasicTouch or Act.StandardTouch or Act.AdvancedTouch or Act.PreciseTouch or
+        Act.PrudentTouch or Act.PreparatoryTouch or Act.TrainedFinesse or Act.ByregotsBlessing or
+        Act.Innovation or Act.GreatStrides or Act.Reflect;
 
     private unsafe ActionDef? GetConditionOverride(SynthState s, Buffs b)
     {
