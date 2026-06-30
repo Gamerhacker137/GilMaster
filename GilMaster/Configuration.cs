@@ -66,6 +66,12 @@ public sealed class Configuration : IPluginConfiguration
     // (+ the above-level buffer). Off = show every furnishing regardless of level.
     public bool FurnitureMyLevelOnly { get; set; } = true;
 
+    // Auto-repair equipped gear (self-repair with dark matter) before each queued craft when
+    // durability drops below RepairPercent, so a long batch can't run gear to 0% and start
+    // failing crafts. Broken gear that can't be self-repaired stops the batch with a message.
+    public bool AutoRepair   { get; set; } = true;
+    public int  RepairPercent { get; set; } = 30;
+
     // Auto-use food/potion before crafting (0 = none). HQ flags pick the HQ version.
     public int  FoodId    { get; set; }
     public bool FoodHq    { get; set; }

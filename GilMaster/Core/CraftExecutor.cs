@@ -236,6 +236,9 @@ public sealed class CraftExecutor : IDisposable
         {
             _lastValidState = state;
             if (state.MaxProgress > 0 && state.Progress >= state.MaxProgress) _sawCompletion = true;
+            // When this step first appeared — used by the settled-state gate (don't decide/re-solve
+            // on a half-updated snapshot right at a step transition) and the deadlock breaker.
+            if (state.StepCount != _stuckStep) { _stuckStep = state.StepCount; _stepSeenAt = DateTime.Now; }
         }
         if (!state.Valid)
         {
@@ -313,7 +316,12 @@ public sealed class CraftExecutor : IDisposable
         // there's a reason — a special condition to capitalise on/react to, or the plan ran out.
         // Re-solving every step would overwrite the Raphael opening with a weaker 600ms MCTS line.
         var special      = state.Condition != SynthCondition.Normal;
-        var resolveNow   = state.StepCount > 1 && state.StepCount != _lastResolveStep
+        // Settled gate (#5 interim): wait a beat after a step transition so the addon values and
+        // status list have updated before we read them into a re-solve — avoids deciding on a
+        // torn, half-updated snapshot. (A native action-confirmation hook would be exact, but is
+        // patch-fragile; this polling settle is the safe approximation.)
+        var settled      = (DateTime.Now - _stepSeenAt).TotalSeconds > 0.25;
+        var resolveNow   = state.StepCount > 1 && state.StepCount != _lastResolveStep && settled
                            && (planLost || planDone || special);
         if (Plugin.Config.PreferHq && _input != null && _planTask == null && craftOngoing && resolveNow)
         {
@@ -361,9 +369,6 @@ public sealed class CraftExecutor : IDisposable
                 $" Qual {state.Quality}/{state.MaxQuality} Dur {state.Durability}/{state.MaxDurability}" +
                 $" Cond {state.Condition} | {planInfo} | decided: {next?.Label ?? "(none)"}");
         }
-
-        // Deadlock guard: remember when we first saw this step un-fired (used in the fire path).
-        if (state.StepCount != _stuckStep) { _stuckStep = state.StepCount; _stepSeenAt = DateTime.Now; }
 
         if (CurrentState != State.Executing) return;
         if (Service.Condition[ConditionFlag.Occupied]) return;

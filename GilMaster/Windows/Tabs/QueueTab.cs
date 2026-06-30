@@ -137,6 +137,21 @@ public sealed class QueueTab
         // Retainer/alt-aware counting via Allagan Tools.
         DrawRetainerToggle(sameLine: true);
 
+        // Auto-repair (self-repair with dark matter before each craft).
+        ImGui.SameLine();
+        var ar = Plugin.Config.AutoRepair;
+        if (ImGui.Checkbox("Auto-repair##qrepair", ref ar)) { Plugin.Config.AutoRepair = ar; Plugin.Config.Save(); }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"Self-repair gear with dark matter before a queued craft when durability drops below {Plugin.Config.RepairPercent}%.\n" +
+                             "Broken gear that can't be self-repaired stops the batch with a message.");
+        if (ar)
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(64);
+            var rp = Plugin.Config.RepairPercent;
+            if (ImGui.InputInt("%##qrepairpct", ref rp, 5, 10)) { Plugin.Config.RepairPercent = Math.Clamp(rp, 1, 99); Plugin.Config.Save(); }
+        }
+
         if (makeableResults.Count > 0)
         {
             ImGui.SameLine();

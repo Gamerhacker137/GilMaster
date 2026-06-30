@@ -16,7 +16,7 @@ namespace GilMaster.Core;
 /// </summary>
 public sealed class CraftQueueExecutor : IDisposable
 {
-    public enum State { Idle, SwitchingJob, OpeningRecipe, Running, Done, Error }
+    public enum State { Idle, Repairing, SwitchingJob, OpeningRecipe, Running, Done, Error }
 
     public State  CurrentState { get; private set; } = State.Idle;
     public string StatusText   { get; private set; } = "Idle";
@@ -41,6 +41,9 @@ public sealed class CraftQueueExecutor : IDisposable
     private const double ErrorFloodWindow = 10.0;
     private const int    ErrorFloodCount  = 5;
 
+    // Which entry we've already run the repair gate for (so it fires at most once per entry).
+    private int _repairedForIndex = -1;
+
     public CraftQueueExecutor()
     {
         Service.Framework.Update += Tick;
@@ -59,6 +62,7 @@ public sealed class CraftQueueExecutor : IDisposable
         _queue       = entries;
         CurrentIndex = 0;
         _recentErrors.Clear();
+        _repairedForIndex = -1;
         BeginEntry(0);
     }
 
@@ -87,6 +91,23 @@ public sealed class CraftQueueExecutor : IDisposable
 
         switch (CurrentState)
         {
+            case State.Repairing:
+            {
+                var rs = RepairManager.ProcessRepair(Plugin.Config.RepairPercent);
+                if (rs is RepairManager.RepairStatus.Done or RepairManager.RepairStatus.CannotRepair)
+                {
+                    _repairedForIndex = CurrentIndex; // gate done — don't loop it
+                    BeginEntry(CurrentIndex);         // proceed to the actual craft setup
+                }
+                else if ((DateTime.Now - _phaseStarted).TotalSeconds > 30.0)
+                {
+                    _repairedForIndex = CurrentIndex;
+                    Service.Log.Warning("[GilMaster] Auto-repair timed out — continuing.");
+                    BeginEntry(CurrentIndex);
+                }
+                break;
+            }
+
             case State.SwitchingJob:
             {
                 var needed  = (uint)_queue[CurrentIndex].JobId;
@@ -176,6 +197,23 @@ public sealed class CraftQueueExecutor : IDisposable
         var entry = _queue[index];
 
         StatusText = $"[{index + 1}/{_queue.Count}] {entry.Name} ({entry.JobName})";
+
+        // Repair gate (once per entry): top up durability before crafting so a long batch can't
+        // run gear to 0% and start failing crafts.
+        if (Plugin.Config.AutoRepair && _repairedForIndex != index
+            && RepairManager.MinEquippedPercent() < Plugin.Config.RepairPercent
+            && RepairManager.CanSelfRepairAll())
+        {
+            SetState(State.Repairing, $"Repairing gear ({RepairManager.MinEquippedPercent()}%)...");
+            return;
+        }
+        // Refuse to craft on broken gear we can't self-repair — it would just fail and burn mats.
+        if (RepairManager.IsAnyGearBroken() && !RepairManager.CanSelfRepairAll())
+        {
+            Fail("Equipped gear is broken (0%) and can't be auto-repaired (no dark matter or too low level). Repair at a mender, then retry.");
+            return;
+        }
+        _repairedForIndex = index;
 
         // Prerequisite check: make sure this entry's ingredients are actually in our bags
         // before we open the recipe and arm the synth — otherwise it would just stall.
