@@ -90,6 +90,11 @@ public sealed class CraftExecutor : IDisposable
     // Step we last fired an action on — enforces ONE action per craft step (wait for the
     // game to advance the step before acting again, instead of spamming).
     private uint _firedStep = uint.MaxValue;
+    // Per-step deadlock guard: if no action can be fired for StuckTimeout seconds on the same
+    // craft step, force a Basic Synthesis to recover instead of stalling out to the 30s watchdog.
+    private uint _stuckStep = uint.MaxValue;
+    private DateTime _stepSeenAt = DateTime.MinValue;
+    private const double StuckTimeout = 10.0;
     // Combo/usage state, mutated as we execute planned actions, fed back into re-solves.
     private ActionStates _liveActionStates;
 
@@ -328,6 +333,9 @@ public sealed class CraftExecutor : IDisposable
                 $" Cond {state.Condition} | {planInfo} | decided: {next?.Label ?? "(none)"}");
         }
 
+        // Deadlock guard: remember when we first saw this step un-fired (used in the fire path).
+        if (state.StepCount != _stuckStep) { _stuckStep = state.StepCount; _stepSeenAt = DateTime.Now; }
+
         if (CurrentState != State.Executing) return;
         if (Service.Condition[ConditionFlag.Occupied]) return;
         if ((DateTime.Now - lastActionAt).TotalSeconds < StepDelay) return;
@@ -353,6 +361,19 @@ public sealed class CraftExecutor : IDisposable
             return;
 
         if (next == null) return;
+
+        // Deadlock breaker: if an action couldn't be fired for StuckTimeout seconds on this step
+        // (e.g. a condition override the game rejects) and the craft still needs progress, force a
+        // Basic Synthesis so the craft keeps moving instead of stalling out to the watchdog.
+        if (state.StepCount != _firedStep
+            && (DateTime.Now - _stepSeenAt).TotalSeconds > StuckTimeout
+            && state.Progress < state.MaxProgress)
+        {
+            Service.Log.Warning(
+                $"[GilMaster] Step {state.StepCount} stuck {StuckTimeout:0}s on '{next.Value.Label}' — forcing Basic Synthesis to recover.");
+            next       = Def(Act.BasicSynthesis, true, "Basic Synthesis (recover)");
+            isOverride = true;
+        }
 
         var act         = next.Value;
         var resolvedId  = ResolveId(act.BaseId, act.IsCraftAction);
@@ -447,22 +468,29 @@ public sealed class CraftExecutor : IDisposable
 
     private unsafe ActionDef? GetConditionOverride(SynthState s, Buffs b)
     {
+        // Once quality is maxed there's nothing to gain from a condition-based quality play — and
+        // nothing to wait for by Observing a Poor turn. Returning Observe on a finished-quality
+        // craft is exactly what stalled it (Observe makes no progress and the craft never
+        // advanced). So gate every quality play on still needing quality; otherwise fall through
+        // to the plan, which just synthesises to finish.
+        bool needQuality = s.Quality < s.MaxQuality;
         float qPct = s.MaxQuality > 0 ? (float)s.Quality / s.MaxQuality : 0f;
         return s.Condition switch
         {
             // Excellent: maximise the quality window
-            SynthCondition.Excellent when b.IQ >= 1 && qPct >= 0.3f && CanUseCraft(Act.ByregotsBlessing)
+            SynthCondition.Excellent when needQuality && b.IQ >= 1 && qPct >= 0.3f && CanUseCraft(Act.ByregotsBlessing)
                 => Def(Act.ByregotsBlessing, true, "Byregot's (Excellent!)"),
-            SynthCondition.Excellent
+            SynthCondition.Excellent when needQuality
                 => Def(Act.BasicTouch, true, "Basic Touch (Excellent!)"),
-            // Poor: waste nothing
-            SynthCondition.Poor
+            // Poor: skip the bad turn — but only while we still want quality, and only if Observe
+            // is actually usable (else fall through and just synthesise).
+            SynthCondition.Poor when needQuality && CanUseCraft(Act.Observe)
                 => Def(Act.Observe, true, "Observe (Poor)"),
             // Good: Precise Touch
-            SynthCondition.Good when CanUseCraft(Act.PreciseTouch)
+            SynthCondition.Good when needQuality && CanUseCraft(Act.PreciseTouch)
                 => Def(Act.PreciseTouch, true, "Precise Touch (Good)"),
-            // Pliant: cheap Manipulation
-            SynthCondition.Pliant when !b.Manipulation && CanUseAction(Act.Manipulation)
+            // Pliant: cheap Manipulation — worth it while building quality or when durability is low.
+            SynthCondition.Pliant when !b.Manipulation && (needQuality || s.Durability <= 20) && CanUseAction(Act.Manipulation)
                 => Def(Act.Manipulation, false, "Manipulation (Pliant)"),
             _ => null,
         };
