@@ -62,6 +62,10 @@ public sealed class Configuration : IPluginConfiguration
     // many levels above your level still count as craftable (e.g. lv18 + 7 → up to lv25).
     public int CraftLevelBuffer { get; set; } = 7;
 
+    // Furniture tab: only show furnishings you can craft at your current crafter levels
+    // (+ the above-level buffer). Off = show every furnishing regardless of level.
+    public bool FurnitureMyLevelOnly { get; set; } = true;
+
     // Auto-use food/potion before crafting (0 = none). HQ flags pick the HQ version.
     public int  FoodId    { get; set; }
     public bool FoodHq    { get; set; }

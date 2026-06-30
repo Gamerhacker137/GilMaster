@@ -27,14 +27,19 @@ public sealed class FurnitureEngine : IDisposable
     public event System.Action? OnUpdated;
 
     private sealed record Meta(uint ItemId, ushort Icon, string Name, string Category,
-        bool Exterior, bool Dyeable, uint RecipeId, int JobId);
+        bool Exterior, bool Dyeable, uint RecipeId, int JobId, int RecipeLevel);
 
     private static List<Meta>? _index;
 
-    public void Scan(string worldOrDc, bool craftableOnly)
+    // Snapshot of the player's crafter levels (CraftType 0..7 → class level), captured on the
+    // UI thread when a scan starts so the background costing can prioritise what you can make.
+    private IReadOnlyDictionary<int, int>? _myLevels;
+
+    public void Scan(string worldOrDc, bool craftableOnly, IReadOnlyDictionary<int, int>? myLevels = null)
     {
         cts?.Cancel();
         cts = new CancellationTokenSource();
+        _myLevels = myLevels;
         IsScanning = true;
         Status = "Indexing furnishings...";
         Progress = 0f;
@@ -91,6 +96,7 @@ public sealed class FurnitureEngine : IDisposable
                     Exterior = m.Exterior, Dyeable = m.Dyeable,
                     Craftable = m.RecipeId != 0, RecipeId = m.RecipeId,
                     CraftJobName = m.JobId >= 0 ? CraftJobNames.Short(m.JobId) : "",
+                    JobId = m.JobId, RecipeLevel = m.RecipeLevel,
                     GoingPrice = going,
                     MinListing = md.MinPrice,
                     Sellers = md.Listings.Count,
@@ -121,7 +127,18 @@ public sealed class FurnitureEngine : IDisposable
 
     private async Task EnrichTopCraftables(List<FurnitureItem> ranked, string world, CancellationToken ct)
     {
-        var top = ranked.Where(r => r.Craftable).Take(40).ToList();
+        // Cost the top 40 craftables by revenue — but when we know the player's levels, cost the
+        // ones they can actually make FIRST, so a low-level player still sees real net margins on
+        // furniture within reach (not just the global big-ticket items they can't craft yet).
+        IEnumerable<FurnitureItem> craftables = ranked.Where(r => r.Craftable);
+        if (_myLevels is { } lv)
+        {
+            var buffer = Plugin.Config.CraftLevelBuffer;
+            bool Reachable(FurnitureItem r) => r.JobId >= 0 && r.RecipeLevel <= lv.GetValueOrDefault(r.JobId, 0) + buffer;
+            var all = craftables.ToList();
+            craftables = all.Where(Reachable).Concat(all.Where(r => !Reachable(r)));
+        }
+        var top = craftables.Take(40).ToList();
         if (top.Count == 0) return;
 
         var perItem = new List<(FurnitureItem Item, Models.RecipeIngredient[] Ings)>();
@@ -177,17 +194,21 @@ public sealed class FurnitureEngine : IDisposable
             if (string.IsNullOrEmpty(name)) return;
 
             uint recipeId = recipeByItem.GetValueOrDefault(itemId);
-            int job = -1;
+            int job = -1, reqLevel = 0;
             if (recipeId != 0)
             {
                 var rec = recipes.GetRowOrDefault(recipeId);
-                if (rec is { } rr) job = (int)rr.CraftType.RowId;
+                if (rec is { } rr)
+                {
+                    job = (int)rr.CraftType.RowId;
+                    reqLevel = rr.RecipeLevelTable.ValueNullable?.ClassJobLevel ?? 0;
+                }
             }
 
             list.Add(new Meta(
                 itemId, it.Icon, name,
                 it.ItemUICategory.ValueNullable?.Name.ExtractText() ?? "Furnishing",
-                exterior, it.DyeCount > 0, recipeId, job));
+                exterior, it.DyeCount > 0, recipeId, job, reqLevel));
         }
 
         foreach (var f in Service.DataManager.GetExcelSheet<HousingFurniture>()) Add(f.Item.RowId, false);

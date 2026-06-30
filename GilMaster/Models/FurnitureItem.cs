@@ -13,6 +13,8 @@ public sealed class FurnitureItem
     public bool   Craftable   { get; init; }
     public uint   RecipeId    { get; init; }
     public string CraftJobName { get; init; } = string.Empty;
+    public int    JobId       { get; init; } = -1;  // CraftType 0=CRP..7=CUL (-1 = not craftable)
+    public int    RecipeLevel { get; init; }         // class level required to craft it
 
     public long   GoingPrice { get; init; }   // 7-day median sale price
     public long   MinListing { get; init; }   // cheapest current listing

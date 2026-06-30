@@ -38,7 +38,7 @@ public sealed class FurnitureTab
         using (new Disable(engine.IsScanning || string.IsNullOrEmpty(target)))
         {
             if (ImGui.Button(engine.IsScanning ? "Scanning..." : "Scan furniture"))
-                engine.Scan(target, craftableOnly);
+                engine.Scan(target, craftableOnly, BuildMyLevels());
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Price every marketable furnishing on " + (string.IsNullOrEmpty(target) ? "your world" : target) +
@@ -84,6 +84,19 @@ public sealed class FurnitureTab
         ImGui.SetNextItemWidth(110);
         ImGui.InputInt("Min sold/wk##furn", ref minWeeklySold, 1, 10);
         if (minWeeklySold < 0) minWeeklySold = 0;
+
+        ImGui.SameLine();
+        var myLevelOnly = Plugin.Config.FurnitureMyLevelOnly;
+        if (ImGui.Checkbox("Only what I can craft##furn", ref myLevelOnly))
+        { Plugin.Config.FurnitureMyLevelOnly = myLevelOnly; Plugin.Config.Save(); }
+        if (ImGui.IsItemHovered())
+        {
+            var lv = BuildMyLevels();
+            var crafters = string.Join("  ", Enumerable.Range(0, 8).Select(j => $"{JobShort[j]} {lv.GetValueOrDefault(j, 0)}"));
+            ImGui.SetTooltip($"Hide furnishings above your crafter level (+{Plugin.Config.CraftLevelBuffer} above-level buffer).\n" +
+                             "More appear as you level your crafters up. Flip-only items are unaffected.\n\n" +
+                             $"Your crafters:  {crafters}");
+        }
 
         ImGui.TextDisabled("Sellers: ");
         ImGui.SameLine(); ImGui.TextColored(new Vector4(0.3f, 1f, 0.4f, 1f), "few = open");
@@ -189,7 +202,27 @@ public sealed class FurnitureTab
         if (scope == 1)  q = q.Where(r => !r.Exterior);
         if (scope == 2)  q = q.Where(r => r.Exterior);
         if (minWeeklySold > 0) q = q.Where(r => r.WeeklySold >= minWeeklySold);
+        if (Plugin.Config.FurnitureMyLevelOnly)
+        {
+            var lv = BuildMyLevels();
+            var buffer = Plugin.Config.CraftLevelBuffer;
+            // Keep flip-only items (no craft level); hide craftables above our level in their job.
+            q = q.Where(r => !r.Craftable || r.JobId < 0
+                || r.RecipeLevel <= lv.GetValueOrDefault(r.JobId, 99) + buffer);
+        }
         return q.ToList();
+    }
+
+    // CraftType 0..7 → the player's current level in that crafter class.
+    // GetCrafterLevel takes the ClassJob id (8..15), hence + 8.
+    private static readonly string[] JobShort = ["CRP", "BSM", "ARM", "GSM", "LTW", "WVR", "ALC", "CUL"];
+
+    private static Dictionary<int, int> BuildMyLevels()
+    {
+        var d = new Dictionary<int, int>();
+        for (var craft = 0; craft < 8; craft++)
+            d[craft] = GilMaster.Core.CraftQueue.GetCrafterLevel(craft + 8);
+        return d;
     }
 
     private List<FurnitureItem> Sort(List<FurnitureItem> rows) => sortCol switch
