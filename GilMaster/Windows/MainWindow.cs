@@ -17,6 +17,7 @@ public sealed class MainWindow : Window, IDisposable
     private readonly SellTab sellTab = new();
     private readonly FlipTab flipTab = new();
     private readonly FurnitureTab furnitureTab = new();
+    private readonly GearTab gearTab = new();
     private readonly SimTab simTab = new();
     private readonly LevelTab levelTab = new();
 
@@ -156,6 +157,12 @@ public sealed class MainWindow : Window, IDisposable
             if (ImGui.BeginTabItem("Furniture"))
             {
                 DrawTabBody("Furniture", furnitureTab.Draw);
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Gear"))
+            {
+                DrawTabBody("Gear", gearTab.Draw);
                 ImGui.EndTabItem();
             }
 
