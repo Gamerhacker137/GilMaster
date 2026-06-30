@@ -34,7 +34,6 @@ public sealed class Configuration : IPluginConfiguration
     // Find tab
     public int SelectedCraftJob { get; set; } = 0;
     public int ManualLevelOverride { get; set; } = 0;
-    public int LevelBuffer { get; set; } = 5;
     public double MinSaleVelocity { get; set; } = 2.0;
     public int ScanResultLimit { get; set; } = 30;
     public bool PreferHq { get; set; } = true;
@@ -85,8 +84,9 @@ public sealed class Configuration : IPluginConfiguration
     public bool PotionHq  { get; set; }
     public string PotionName { get; set; } = "";
 
-    // Auto-craft
-    public bool EnableAutoCraft { get; set; } = false;
+    // Advanced: reveal the developer Sim/benchmark tab (off by default — its only end-user value,
+    // warming the rotation cache, is exposed as a Settings button).
+    public bool ShowSimTab { get; set; } = false;
 
     public void Save() => Service.PluginInterface.SavePluginConfig(this);
 }

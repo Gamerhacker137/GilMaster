@@ -11,19 +11,19 @@ public sealed class MainWindow : Window, IDisposable
 {
     private readonly FindTab findTab = new();
     private readonly GatherTab gatherTab = new();
-    private readonly CraftTab craftTab = new();
-    private readonly QueueTab queueTab = new();
-    private readonly ListsTab listsTab = new();
+    private readonly QueueTab queueTab = new();   // the unified "Craft" tab (absorbs Lists + the old Craft tab)
     private readonly SellTab sellTab = new();
     private readonly FlipTab flipTab = new();
     private readonly FurnitureTab furnitureTab = new();
     private readonly GearTab gearTab = new();
     private readonly SimTab simTab = new();
     private readonly LevelTab levelTab = new();
+    private readonly SettingsTab settingsTab = new();
 
-    // Signals to the tab bar that we want to switch to Gather / Queue next frame
+    // Signals to the tab bar that we want to switch to Gather / Queue / Settings next frame
     private bool pendingGatherSwitch = false;
     private bool pendingQueueSwitch = false;
+    private bool pendingSettingsSwitch = false;
 
     public MainWindow() : base("GilMaster##main", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -62,6 +62,14 @@ public sealed class MainWindow : Window, IDisposable
         Singleton.pendingQueueSwitch = true;
     }
 
+    // Opens the window on the Settings tab — wired to the cog (OpenConfigUi).
+    public static void OpenToSettings()
+    {
+        if (Singleton == null) return;
+        Singleton.IsOpen = true;
+        Singleton.pendingSettingsSwitch = true;
+    }
+
     // The single live MainWindow instance (set in the ctor, persists while the plugin is loaded).
     // Distinct from ActiveInstance, which is null whenever the window is closed.
     private static MainWindow? Singleton;
@@ -71,9 +79,8 @@ public sealed class MainWindow : Window, IDisposable
     private void HandleItemSelected(ProfitableItem item)
     {
         gatherTab.SetTarget(item);
-        craftTab.SetTarget(item);
         pendingGatherSwitch = true;
-        Service.ToastGui.ShowNormal($"Plan ready for {item.Name} — check Gather / Craft tabs.");
+        Service.ToastGui.ShowNormal($"Plan ready for {item.Name} — check the Gather tab.");
     }
 
     public override void OnOpen() => ActiveInstance = this;
@@ -102,17 +109,14 @@ public sealed class MainWindow : Window, IDisposable
         // body lives in its own scrolling child so long content never gets cut off.
         if (ImGui.BeginTabBar("##gm-tabs"))
         {
+            // ── Pipeline: Find → Gather → Craft ──────────────────────────
             if (ImGui.BeginTabItem("Find"))
             {
                 DrawTabBody("Find", findTab.Draw);
                 ImGui.EndTabItem();
             }
 
-            // Use SetSelected flag on the Gather tab when user picks an item in Find
-            var gatherFlags = pendingGatherSwitch
-                ? ImGuiTabItemFlags.SetSelected
-                : ImGuiTabItemFlags.None;
-
+            var gatherFlags = pendingGatherSwitch ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None;
             if (ImGui.BeginTabItem("Gather", gatherFlags))
             {
                 pendingGatherSwitch = false;
@@ -120,28 +124,16 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Craft"))
-            {
-                DrawTabBody("Craft", craftTab.Draw);
-                ImGui.EndTabItem();
-            }
-
-            if (ImGui.BeginTabItem("Lists"))
-            {
-                DrawTabBody("Lists", listsTab.Draw);
-                ImGui.EndTabItem();
-            }
-
-            var queueFlags = pendingQueueSwitch
-                ? ImGuiTabItemFlags.SetSelected
-                : ImGuiTabItemFlags.None;
-            if (ImGui.BeginTabItem("Queue", queueFlags))
+            // The unified Craft tab (search/build/run queue + saved lists + synthesis helper).
+            var craftFlags = pendingQueueSwitch ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None;
+            if (ImGui.BeginTabItem("Craft", craftFlags))
             {
                 pendingQueueSwitch = false;
-                DrawTabBody("Queue", queueTab.Draw);
+                DrawTabBody("Craft", queueTab.Draw);
                 ImGui.EndTabItem();
             }
 
+            // ── Market: Sell · Flip · Furniture ──────────────────────────
             if (ImGui.BeginTabItem("Sell"))
             {
                 DrawTabBody("Sell", sellTab.Draw);
@@ -160,21 +152,33 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.EndTabItem();
             }
 
+            // ── Reference: Gear · Level ──────────────────────────────────
             if (ImGui.BeginTabItem("Gear"))
             {
                 DrawTabBody("Gear", gearTab.Draw);
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Sim"))
+            if (ImGui.BeginTabItem("Level"))
+            {
+                DrawTabBody("Level", levelTab.Draw);
+                ImGui.EndTabItem();
+            }
+
+            // Developer Sim/benchmark tab — hidden unless enabled in Settings ▸ Advanced.
+            if (Plugin.Config.ShowSimTab && ImGui.BeginTabItem("Sim"))
             {
                 DrawTabBody("Sim", simTab.Draw);
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Level"))
+            // Settings, right-aligned, also reachable via the cog (OpenConfigUi).
+            var settingsFlags = ImGuiTabItemFlags.Trailing
+                | (pendingSettingsSwitch ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None);
+            if (ImGui.BeginTabItem("Settings", settingsFlags))
             {
-                DrawTabBody("Level", levelTab.Draw);
+                pendingSettingsSwitch = false;
+                DrawTabBody("Settings", settingsTab.Draw);
                 ImGui.EndTabItem();
             }
 

@@ -28,6 +28,9 @@ public sealed class QueueTab
     // Built once on first search — index of all craftable items
     private static Dictionary<uint, string>? craftableItemNames;
 
+    // Saved crafting lists are folded in here (from the old Lists tab) as a collapsible section.
+    private readonly ListsTab listsTab = new();
+
     public void Draw()
     {
         var queue    = Plugin.CraftQueue;
@@ -36,6 +39,18 @@ public sealed class QueueTab
             CraftQueueExecutor.State.SwitchingJob or
             CraftQueueExecutor.State.OpeningRecipe or
             CraftQueueExecutor.State.Running;
+
+        // Live synthesis helper (the adaptive next action) — visible during any active synth.
+        DrawSynthHelper();
+
+        // Saved crafting lists (named presets + GC-mission import).
+        if (ImGui.CollapsingHeader("Saved crafting lists"))
+        {
+            ImGui.Indent();
+            listsTab.Draw();
+            ImGui.Unindent();
+            ImGui.Separator();
+        }
 
         // ── Search box ────────────────────────────────────────────────────
         ImGui.TextUnformatted("Item:");
@@ -132,32 +147,8 @@ public sealed class QueueTab
         }
         if (isRunning) ImGui.EndDisabled();
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Scan your inventory and list everything you have the materials to craft right now (any job, your level or below).");
-
-        // Retainer/alt-aware counting via Allagan Tools.
-        DrawRetainerToggle(sameLine: true);
-
-        // Auto-repair (self-repair with dark matter before each craft).
-        ImGui.SameLine();
-        var ar = Plugin.Config.AutoRepair;
-        if (ImGui.Checkbox("Auto-repair##qrepair", ref ar)) { Plugin.Config.AutoRepair = ar; Plugin.Config.Save(); }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip($"Self-repair gear with dark matter before a queued craft when durability drops below {Plugin.Config.RepairPercent}%.\n" +
-                             "Broken gear that can't be self-repaired stops the batch with a message.");
-        if (ar)
-        {
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(64);
-            var rp = Plugin.Config.RepairPercent;
-            if (ImGui.InputInt("%##qrepairpct", ref rp, 5, 10)) { Plugin.Config.RepairPercent = Math.Clamp(rp, 1, 99); Plugin.Config.Save(); }
-        }
-
-        // Quick-synth NQ crafts (only matters when Prefer HQ is off).
-        ImGui.SameLine();
-        var qsnq = Plugin.Config.QuickSynthNq;
-        if (ImGui.Checkbox("Quick-synth NQ##qqs", ref qsnq)) { Plugin.Config.QuickSynthNq = qsnq; Plugin.Config.Save(); }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("For NQ crafts (when 'Prefer HQ' is off), use the game's fast batch Quick Synthesis\nfor recipes that support it, instead of crafting them one action at a time.");
+            ImGui.SetTooltip("Scan your inventory and list everything you have the materials to craft right now (any job, your level or below).\n" +
+                             "Auto-repair, quick-synth, retainer counting, food/potion live in Settings ▸ Crafting / Automation.");
 
         if (makeableResults.Count > 0)
         {
@@ -218,9 +209,6 @@ public sealed class QueueTab
 
         // ── Materia extraction ────────────────────────────────────────────
         DrawMateriaSection();
-
-        // ── Food & potion auto-use ────────────────────────────────────────
-        DrawConsumablesSection();
 
         // ── Empty state ───────────────────────────────────────────────────
         if (queue.IsEmpty)
@@ -365,91 +353,6 @@ public sealed class QueueTab
                 queue.Entries.Clear();
                 queue.Missing.Clear();
                 executor.Stop();
-            }
-        }
-    }
-
-    // Toggle: include retainer/alt inventory (Allagan Tools) in all "have" counts.
-    public static void DrawRetainerToggle(bool sameLine = false)
-    {
-        var config = Plugin.Config;
-        if (Plugin.AllaganTools.IsAvailable)
-        {
-            if (sameLine) ImGui.SameLine();
-            var inc = config.IncludeRetainerInventory;
-            if (ImGui.Checkbox("Count retainers/alts##incret", ref inc))
-            {
-                config.IncludeRetainerInventory = inc;
-                config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Use Allagan Tools to count materials stored on your retainers and alt\ncharacters too — so mats parked on a retainer still count as \"have\".");
-        }
-        else if (config.IncludeRetainerInventory)
-        {
-            // Was enabled but Allagan Tools is gone — counts silently fall back to bags.
-            if (sameLine) ImGui.SameLine();
-            ImGui.TextDisabled("(install Allagan Tools for retainer counts)");
-        }
-    }
-
-    // Food / potion picker — auto-applied before crafting (absorbed from Artisan).
-    private string foodSearch = "", potionSearch = "";
-    private string prevFood = "\0", prevPotion = "\0";
-    private List<(uint Id, string Name)> foodMatches = [], potionMatches = [];
-
-    private void DrawConsumablesSection()
-    {
-        var cfg = Plugin.Config;
-        if (!ImGui.CollapsingHeader("Food & potion (auto-use before crafting)")) return;
-
-        DrawConsumablePicker("Food", ref foodSearch, ref prevFood, ref foodMatches,
-            cfg.FoodId, cfg.FoodName, cfg.FoodHq,
-            (id, name) => { cfg.FoodId = (int)id; cfg.FoodName = name; cfg.Save(); },
-            hq => { cfg.FoodHq = hq; cfg.Save(); });
-
-        DrawConsumablePicker("Potion", ref potionSearch, ref prevPotion, ref potionMatches,
-            cfg.PotionId, cfg.PotionName, cfg.PotionHq,
-            (id, name) => { cfg.PotionId = (int)id; cfg.PotionName = name; cfg.Save(); },
-            hq => { cfg.PotionHq = hq; cfg.Save(); });
-
-        ImGui.TextDisabled("Leave blank for none. The item is used before each craft if the buff isn't active.");
-        ImGui.Separator();
-    }
-
-    private static void DrawConsumablePicker(string label, ref string search, ref string prev,
-        ref List<(uint Id, string Name)> matches, int curId, string curName, bool curHq,
-        Action<uint, string> onPick, Action<bool> onHq)
-    {
-        ImGui.TextDisabled($"{label}:");
-        ImGui.SameLine();
-        ImGui.TextColored(curId > 0 ? new Vector4(0.3f, 1f, 0.4f, 1f) : new Vector4(0.6f, 0.6f, 0.6f, 1f),
-            curId > 0 ? curName : "(none)");
-        if (curId > 0)
-        {
-            ImGui.SameLine();
-            var hq = curHq;
-            if (ImGui.Checkbox($"HQ##{label}hq", ref hq)) onHq(hq);
-            ImGui.SameLine();
-            if (ImGui.SmallButton($"clear##{label}")) onPick(0, "");
-        }
-
-        ImGui.SetNextItemWidth(220);
-        ImGui.InputTextWithHint($"##{label}search", $"search {label.ToLower()}…", ref search, 64);
-        if (search != prev)
-        {
-            prev = search;
-            matches = search.Length >= 3 ? Core.FlipEngine.Search(search, 12) : [];
-        }
-        if (matches.Count > 0)
-        {
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(240);
-            if (ImGui.BeginCombo($"##{label}res", "(pick)"))
-            {
-                foreach (var (id, name) in matches)
-                    if (ImGui.Selectable(name)) { onPick(id, name); search = ""; prev = "\0"; }
-                ImGui.EndCombo();
             }
         }
     }
@@ -619,6 +522,24 @@ public sealed class QueueTab
             Service.ChatGui.Print(s);
         }
         catch (Exception ex) { Service.Log.Warning(ex, "link item failed"); }
+    }
+
+    // Live "next action" aid shown during any active synthesis (moved from the old Craft tab).
+    private static void DrawSynthHelper()
+    {
+        var executor = Plugin.CraftExecutor;
+        if (!executor.InSynthesis) return;
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.1f, 0.15f, 0.2f, 1f));
+        if (ImGui.BeginChild("##synthhelper", new Vector2(-1, 46), true))
+        {
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 1f, 1f), "Synthesis Helper");
+            ImGui.SameLine();
+            ImGui.TextDisabled("— next action:");
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1f, 0.9f, 0.3f, 1f), executor.Recommendation ?? "...");
+        }
+        ImGui.EndChild();
+        ImGui.PopStyleColor();
     }
 
     // ── Craftable item index ──────────────────────────────────────────────

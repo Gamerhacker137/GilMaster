@@ -108,13 +108,11 @@ public sealed class FindTab
         ImGui.TextDisabled(config.ManualLevelOverride == 0 ? "(auto)" : string.Empty);
         ImGui.SameLine();
 
-        var dcScan = config.ScanDatacenter;
-        if (ImGui.Checkbox("DC##scan-dc", ref dcScan))
-        {
-            config.ScanDatacenter = dcScan;
-            config.Save();
-        }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Scan whole datacenter instead of home world");
+        // Scan scope is a global, edited in Settings > Scanning — show it read-only here.
+        ImGui.TextDisabled(config.ScanDatacenter ? "[DC]" : "[World]");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Scan scope (change in Settings ▸ Scanning): " +
+                (config.ScanDatacenter ? "whole datacenter" : "your home world"));
 
         ImGui.SameLine();
 

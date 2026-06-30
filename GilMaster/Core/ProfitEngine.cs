@@ -70,7 +70,7 @@ public sealed class ProfitEngine : IDisposable
             var recipeSheet = Service.DataManager.GetExcelSheet<Recipe>();
             var itemSheet = Service.DataManager.GetExcelSheet<Item>();
             var minLevel = Math.Max(1, playerLevel - 10);
-            var maxLevel = playerLevel + config.LevelBuffer;
+            var maxLevel = playerLevel + config.CraftLevelBuffer;
 
             // (recipeId, itemId, level, amountResult, craftJobId)
             var candidates = new List<(uint recipeId, uint itemId, int level, int amountResult, int craftJobId)>();

@@ -33,6 +33,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CraftListContextMenu contextMenu = new();
 
     private const string Command = "/gilmaster";
+    private const string CommandAlias = "/gil";
 
     public Plugin(IDalamudPluginInterface pi)
     {
@@ -77,23 +78,29 @@ public sealed class Plugin : IDalamudPlugin
         {
             HelpMessage = "Open GilMaster — find profitable items to gather and craft.",
         });
+        Service.CommandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Alias for /gilmaster.",
+        });
 
         Service.PluginInterface.UiBuilder.Draw += windowSystem.Draw;
         Service.PluginInterface.UiBuilder.OpenMainUi += OpenMainWindow;
-        Service.PluginInterface.UiBuilder.OpenConfigUi += OpenMainWindow;
+        Service.PluginInterface.UiBuilder.OpenConfigUi += OpenSettings;
 
         contextMenu.Enable();
     }
 
     private void OnCommand(string command, string args) => OpenMainWindow();
     private void OpenMainWindow() => mainWindow.IsOpen = true;
+    private void OpenSettings() { mainWindow.IsOpen = true; MainWindow.OpenToSettings(); }
 
     public void Dispose()
     {
         Service.CommandManager.RemoveHandler(Command);
+        Service.CommandManager.RemoveHandler(CommandAlias);
         Service.PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
         Service.PluginInterface.UiBuilder.OpenMainUi -= OpenMainWindow;
-        Service.PluginInterface.UiBuilder.OpenConfigUi -= OpenMainWindow;
+        Service.PluginInterface.UiBuilder.OpenConfigUi -= OpenSettings;
         contextMenu.Dispose();
         MateriaExtractor.Dispose();
         windowSystem.RemoveAllWindows();

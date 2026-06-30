@@ -45,9 +45,10 @@ public sealed class FurnitureTab
                              ".\nPulls the housing item set straight from the game, so it's complete.");
 
         ImGui.SameLine();
-        var dc = Plugin.Config.ScanDatacenter;
-        if (ImGui.Checkbox("DC##furn-dc", ref dc)) { Plugin.Config.ScanDatacenter = dc; Plugin.Config.Save(); }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Price across the whole datacenter instead of your home world.");
+        ImGui.TextDisabled(Plugin.Config.ScanDatacenter ? "[DC]" : "[World]");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Scan scope (change in Settings ▸ Scanning): " +
+                (Plugin.Config.ScanDatacenter ? "whole datacenter" : "your home world"));
 
         ImGui.SameLine();
         if (ImGui.Checkbox("Craftable only##furn", ref craftableOnly)) { }
