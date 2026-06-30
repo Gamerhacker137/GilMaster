@@ -24,6 +24,7 @@ public sealed class Plugin : IDalamudPlugin
     public static SellEngine         SellEngine         { get; private set; } = null!;
     public static FlipEngine         FlipEngine         { get; private set; } = null!;
     public static CraftSimRunner     CraftSim           { get; private set; } = null!;
+    public static FurnitureEngine    FurnitureEngine    { get; private set; } = null!;
 
     private readonly WindowSystem windowSystem = new("GilMaster");
     private readonly MainWindow mainWindow;
@@ -54,6 +55,7 @@ public sealed class Plugin : IDalamudPlugin
         SellEngine         = new SellEngine();
         FlipEngine         = new FlipEngine();
         CraftSim           = new CraftSimRunner();
+        FurnitureEngine    = new FurnitureEngine();
 
         // Load last scan + learned crafting rotations from disk
         ProfitEngine.TryLoadCache();
@@ -93,6 +95,7 @@ public sealed class Plugin : IDalamudPlugin
         SellEngine.Dispose();
         FlipEngine.Dispose();
         CraftSim.Dispose();
+        FurnitureEngine.Dispose();
         ProfitEngine.Dispose();
         Config.Save();
         ECommonsMain.Dispose();
