@@ -21,10 +21,16 @@ public sealed class RecipeIngredient
     {
         if (assumeGatherablesFree && IsGatherable)
             return 0;
-        if (IsShopBuyable && ShopPrice > 0)
-            return ShopPrice;
-        if (MarketPriceFetched && MarketMinPrice > 0)
-            return MarketMinPrice;
+
+        // Buy from whichever is cheaper — the NPC vendor or the market board.
+        long shop   = IsShopBuyable && ShopPrice > 0 ? ShopPrice : 0;
+        long market = MarketPriceFetched && MarketMinPrice > 0 ? MarketMinPrice : 0;
+        if (shop > 0 && market > 0) return System.Math.Min(shop, market);
+        if (shop > 0)   return shop;
+        if (market > 0) return market;
         return 0;
     }
+
+    /// <summary>True when an NPC vendor sells this — useful for the shopping list.</summary>
+    public bool VendorSold => IsShopBuyable && ShopPrice > 0;
 }

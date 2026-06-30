@@ -2,7 +2,7 @@
   "Author": "Gamerhacker137",
   "Name": "GilMaster",
   "InternalName": "GilMaster",
-  "AssemblyVersion": "1.0.48.0",
+  "AssemblyVersion": "1.0.49.0",
   "Punchline": "Find, gather, craft, and sell the most profitable items on your server.",
   "Description": "Scans Universalis for high-demand crafted items matching your level, showing realistic prices, honest net profit, and seller competition. A Sell tab prices your whole inventory and tells you what to list and at what price. Drives GatherBuddy to gather materials and Artisan to craft them, reads your retainer/alt stash via Allagan Tools, and includes crafting lists, a materia helper, and a DoH/DoL leveling advisor. Use /gilmaster to open.",
   "Tags": ["market", "craft", "gather", "profit", "leveling"],

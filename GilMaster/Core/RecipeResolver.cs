@@ -11,9 +11,10 @@ public sealed class RecipeResolver
     // Gatherables built by GatheringLocator — used to classify ingredients
     private HashSet<uint> gatherableItemIds = [];
 
-    // Simple shop-buyable items: crystals/shards and common vendor items.
-    // In FFXIV, crystals are sold by material suppliers. Row IDs 2-19 are crystals/shards/clusters.
-    private static bool IsLikelyShopBuyable(uint itemId) => itemId is >= 2 and <= 19;
+    // An item is shop-buyable if any gil-shop NPC sells it (from the game's vendor data),
+    // or it's a crystal/shard/cluster (row IDs 2-19, always sold by material suppliers).
+    private static bool IsLikelyShopBuyable(uint itemId)
+        => VendorPrices.IsVendorSold(itemId) || itemId is >= 2 and <= 19;
 
     public void SetGatherables(HashSet<uint> ids) => gatherableItemIds = ids;
 
@@ -133,7 +134,11 @@ public sealed class RecipeResolver
 
     private static long EstimateShopPrice(uint itemId)
     {
-        // Shards = 3g, Crystals = 4g, Clusters = 6g (approximate vendor prices)
+        // Real NPC gil-shop price when the item is sold by a vendor.
+        var vendor = VendorPrices.Get(itemId);
+        if (vendor > 0) return vendor;
+
+        // Crystals/shards/clusters fall back to their well-known prices.
         return itemId switch
         {
             >= 2 and <= 7 => 3,     // shards
