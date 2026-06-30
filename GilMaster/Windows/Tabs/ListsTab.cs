@@ -244,23 +244,14 @@ public sealed class ListsTab
     // Build (or rebuild) the "GC mission" list from the open GC Supply window.
     private void AddGcMissionList()
     {
-        var items = GrandCompanyMission.ReadSupplyItems();
-        if (items.Count == 0)
+        var gc = GrandCompanyMission.BuildGcList();
+        if (gc == null)
         {
             Service.ToastGui.ShowError("No craftable GC mission items — open the GC Supply window (Personnel Officer) first.");
             return;
         }
 
-        var lists = Plugin.Config.CraftLists;
-        lists.RemoveAll(l => l.IsGcMission || l.Name == GrandCompanyMission.ListName);
-
-        var gc = new CraftList { Name = GrandCompanyMission.ListName, IsGcMission = true };
-        foreach (var (id, qty, name) in items)
-            gc.Items.Add(new CraftListItem { ItemId = id, Name = name, Quantity = qty });
-
-        lists.Add(gc);
-        selectedListIndex = lists.Count - 1;
-        Plugin.Config.Save();
+        selectedListIndex = Plugin.Config.CraftLists.IndexOf(gc);
         Service.ToastGui.ShowNormal($"Built '{gc.Name}' from your GC missions ({gc.Items.Count} item(s)).");
     }
 

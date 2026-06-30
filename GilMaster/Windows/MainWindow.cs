@@ -35,6 +35,7 @@ public sealed class MainWindow : Window, IDisposable
         SizeCondition = ImGuiCond.FirstUseEver;
 
         Plugin.ProfitEngine.OnResultsUpdated += Refresh;
+        Singleton = this;
     }
 
     private void Refresh() { /* triggers redraw naturally on next frame */ }
@@ -50,6 +51,19 @@ public sealed class MainWindow : Window, IDisposable
     {
         if (ActiveInstance != null) ActiveInstance.pendingQueueSwitch = true;
     }
+
+    // Like SwitchToQueue, but also OPENS the window first — used by the in-game GC overlay
+    // button, which can fire while the GilMaster window is closed (ActiveInstance is null then).
+    public static void OpenToQueue()
+    {
+        if (Singleton == null) return;
+        Singleton.IsOpen = true;            // OnOpen sets ActiveInstance; Draw consumes the flag
+        Singleton.pendingQueueSwitch = true;
+    }
+
+    // The single live MainWindow instance (set in the ctor, persists while the plugin is loaded).
+    // Distinct from ActiveInstance, which is null whenever the window is closed.
+    private static MainWindow? Singleton;
 
     private static MainWindow? ActiveInstance;
 

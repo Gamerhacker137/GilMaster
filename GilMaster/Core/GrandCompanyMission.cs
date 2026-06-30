@@ -39,4 +39,27 @@ public static class GrandCompanyMission
         catch (Exception ex) { Service.Log.Warning(ex, "[GilMaster] Read GC supply failed"); }
         return result;
     }
+
+    /// <summary>
+    /// Reads the open GC Supply window and (re)builds the persisted "GC mission" craft list,
+    /// replacing any prior GC list so repeated clicks always mirror the current missions.
+    /// Returns the built list, or null if nothing craftable is listed (window closed / empty).
+    /// Shared by the Lists tab button and the in-game GC-window overlay.
+    /// </summary>
+    public static CraftList? BuildGcList()
+    {
+        var items = ReadSupplyItems();
+        if (items.Count == 0) return null;
+
+        var lists = Plugin.Config.CraftLists;
+        lists.RemoveAll(l => l.IsGcMission || l.Name == ListName);
+
+        var gc = new CraftList { Name = ListName, IsGcMission = true };
+        foreach (var (id, qty, name) in items)
+            gc.Items.Add(new CraftListItem { ItemId = id, Name = name, Quantity = qty });
+
+        lists.Add(gc);
+        Plugin.Config.Save();
+        return gc;
+    }
 }

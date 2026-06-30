@@ -28,6 +28,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly WindowSystem windowSystem = new("GilMaster");
     private readonly MainWindow mainWindow;
+    private readonly GcSupplyOverlay gcSupplyOverlay = new();
     private readonly CraftListContextMenu contextMenu = new();
 
     private const string Command = "/gilmaster";
@@ -63,6 +64,8 @@ public sealed class Plugin : IDalamudPlugin
 
         mainWindow = new MainWindow();
         windowSystem.AddWindow(mainWindow);
+        // Anchored button on the native GC Delivery Missions window (drawn via windowSystem.Draw).
+        windowSystem.AddWindow(gcSupplyOverlay);
 
         Service.CommandManager.AddHandler(Command, new CommandInfo(OnCommand)
         {
