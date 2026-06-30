@@ -1,7 +1,7 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
     <AssemblyName>GilMaster</AssemblyName>
-    <Version>1.0.49</Version>
+    <Version>1.0.50</Version>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Platforms>x64</Platforms>
@@ -23,4 +23,19 @@
   <ItemGroup>
     <None Include="./GilMaster.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!--
+    Raphael.Net (pulled in transitively by Craftimizer.Solver) ships native solver binaries
+    for six runtimes: linux-arm64/x64, osx-arm64/x64, win-arm64, win-x64. FFXIV + Dalamud is
+    Windows x64 only, so the other five (~3 MB uncompressed) are dead weight that bloated the
+    release zip and made it time out on slow connections. Drop them from the copy-local set
+    BEFORE they ever reach the output dir, so they never get bundled. win-x64 is the only one
+    Dalamud actually P/Invokes.
+  -->
+  <Target Name="TrimForeignRuntimes" AfterTargets="ResolveReferences">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+        Condition="$([System.String]::Copy('%(ReferenceCopyLocalPaths.DestinationSubDirectory)').StartsWith('runtimes\')) AND !$([System.String]::Copy('%(ReferenceCopyLocalPaths.DestinationSubDirectory)').StartsWith('runtimes\win-x64'))" />
+    </ItemGroup>
+  </Target>
 </Project>

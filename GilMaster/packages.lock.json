@@ -14,6 +14,12 @@
         "resolved": "1.2.39",
         "contentHash": "fcFN01tDTIQqDuTwr1jUQK/geofiwjG5DycJQOnC72i1SsLAk1ELe+apBOuZ11UMQG8YKFZG1FgvjZPbqHyatg=="
       },
+      "ECommons": {
+        "type": "Direct",
+        "requested": "[3.2.0.15, )",
+        "resolved": "3.2.0.15",
+        "contentHash": "f7IoU8fYDjVqetKKCSBDPK4Up585DTgVRfNHTkVWq6Q2xZgvrhsjR8RCG1RYIyUp4pqjFekr34NjW570k9Lmng=="
+      },
       "Polly.Core": {
         "type": "Direct",
         "requested": "[8.6.5, )",
