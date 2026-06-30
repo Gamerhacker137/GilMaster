@@ -1,3 +1,4 @@
+using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
@@ -34,12 +35,30 @@ public sealed class CraftQueueExecutor : IDisposable
     private string   _lastExecutorStatus = "";
     private const double RunningStallTimeout = 30.0;
 
-    public CraftQueueExecutor() { Service.Framework.Update += Tick; }
+    // Error-flood breaker: a burst of game error toasts (an action repeatedly rejected — out of
+    // CP, durability, bad state) aborts the batch fast instead of waiting out the 30s watchdog.
+    private readonly Queue<DateTime> _recentErrors = new();
+    private const double ErrorFloodWindow = 10.0;
+    private const int    ErrorFloodCount  = 5;
+
+    public CraftQueueExecutor()
+    {
+        Service.Framework.Update += Tick;
+        Service.ToastGui.ErrorToast += OnErrorToast;
+    }
+
+    private void OnErrorToast(ref SeString message, ref bool isHandled)
+    {
+        // Only count errors while we're actively driving a craft batch.
+        if (CurrentState is State.Running or State.OpeningRecipe or State.SwitchingJob)
+            _recentErrors.Enqueue(DateTime.Now);
+    }
 
     public void Start(List<CraftQueueEntry> entries)
     {
         _queue       = entries;
         CurrentIndex = 0;
+        _recentErrors.Clear();
         BeginEntry(0);
     }
 
@@ -89,6 +108,16 @@ public sealed class CraftQueueExecutor : IDisposable
 
             case State.Running:
             {
+                // Error-flood breaker: prune errors outside the window, abort on a burst.
+                while (_recentErrors.Count > 0 && (DateTime.Now - _recentErrors.Peek()).TotalSeconds > ErrorFloodWindow)
+                    _recentErrors.Dequeue();
+                if (_recentErrors.Count >= ErrorFloodCount)
+                {
+                    _recentErrors.Clear();
+                    Fail("Too many game errors in a few seconds — aborting (check CP, gear durability, or the rotation).");
+                    break;
+                }
+
                 var ex     = Plugin.CraftExecutor.CurrentState;
                 var status = Plugin.CraftExecutor.StatusText;
 
@@ -165,7 +194,8 @@ public sealed class CraftQueueExecutor : IDisposable
         }
         else
         {
-            SwitchJob(entry.JobId);
+            var (ok, err) = SwitchJob(entry.JobId);
+            if (!ok) { Fail($"Couldn't switch to {entry.JobName}: {err}."); return; }
             SetState(State.SwitchingJob, $"Switching to {entry.JobName}...");
         }
         OnChanged?.Invoke();
@@ -209,18 +239,26 @@ public sealed class CraftQueueExecutor : IDisposable
         Service.ToastGui.ShowNormal($"GC mission crafted — removed the '{src.Name}' list.");
     }
 
-    private static unsafe void SwitchJob(int jobId)
+    // Equip the gearset for a crafter job. Returns a failure reason (instead of silently stalling
+    // to the phase timeout) when there's no gearset, the gearset's main tool is missing/broken, or
+    // EquipGearset itself fails.
+    private static unsafe (bool Ok, string? Error) SwitchJob(int jobId)
     {
         var module = RaptureGearsetModule.Instance();
-        if (module == null) return;
+        if (module == null) return (false, "gearset module unavailable");
         for (var i = 0; i < 100; i++)
         {
             var gs = module->GetGearset(i);
             if (gs == null) continue;
             if (!gs->Flags.HasFlag(RaptureGearsetModule.GearsetFlag.Exists)) continue;
-            if (gs->ClassJob == (uint)jobId) { module->EquipGearset(i); return; }
+            if (gs->ClassJob != (uint)jobId) continue;
+
+            if (gs->Flags.HasFlag(RaptureGearsetModule.GearsetFlag.MainHandMissing))
+                return (false, $"gearset {i + 1} has no main tool (broken or unequipped) — repair/fix it");
+            var rc = module->EquipGearset(i);
+            return rc < 0 ? (false, $"EquipGearset failed (code {rc}) for gearset {i + 1}") : (true, null);
         }
-        Service.Log.Warning($"[GilMaster] CraftQueueExecutor: no gearset found for job {jobId}");
+        return (false, $"no gearset found for this job — create one in the Gear Set list");
     }
 
     private void SetState(State s, string text)
@@ -240,5 +278,9 @@ public sealed class CraftQueueExecutor : IDisposable
         OnChanged?.Invoke();
     }
 
-    public void Dispose() { Service.Framework.Update -= Tick; }
+    public void Dispose()
+    {
+        Service.Framework.Update -= Tick;
+        Service.ToastGui.ErrorToast -= OnErrorToast;
+    }
 }

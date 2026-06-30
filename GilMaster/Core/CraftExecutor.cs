@@ -100,6 +100,8 @@ public sealed class CraftExecutor : IDisposable
     // consumes the materials — so it must not be counted as a successful craft.
     private SynthState _lastValidState;
     private bool _sawCompletion;
+    // Stats the current opening plan was solved for — used to cache it (keyed by recipe+stats).
+    private (int Cms, int Ctrl, int Cp, int Lvl) _planStats;
     // Combo/usage state, mutated as we execute planned actions, fed back into re-solves.
     private ActionStates _liveActionStates;
 
@@ -268,6 +270,12 @@ public sealed class CraftExecutor : IDisposable
             var wasLive = _pendingIsLive;
             _planTask      = null;
             _pendingIsLive = false;
+
+            // Cache a completed OPENING (Raphael) plan keyed by recipe+stats, so the NEXT craft of
+            // this recipe seeds it instantly — even if it arrived too late to use on this craft.
+            if (!wasLive && plan is { Count: > 0 } && currentRecipeId != 0)
+                RotationCache.Store(currentRecipeId, plan, _planStats.Cms, _planStats.Ctrl, _planStats.Cp, _planStats.Lvl);
+
             // Initial plans assume a fresh craft, so only adopt at step 1. Adaptive
             // re-solves are computed FROM the current state, so adopt them immediately.
             if (plan?.Count > 0 && (wasLive || state.StepCount == 1))
@@ -300,9 +308,14 @@ public sealed class CraftExecutor : IDisposable
         // HQ only — NQ stays on the fast greedy synthesis loop.
         var craftOngoing = state.Progress < state.MaxProgress;
         var planLost     = plannedRotation == null && state.StepCount > 1;
-        var newStep      = state.StepCount > 1 && state.StepCount != _lastResolveStep;
-        if (Plugin.Config.PreferHq && _input != null && _planTask == null
-            && craftOngoing && (planLost || newStep))
+        var planDone     = plannedRotation != null && planStep >= plannedRotation.Length;
+        // Follow the strong (Raphael) opening line on uneventful Normal steps; only re-solve when
+        // there's a reason — a special condition to capitalise on/react to, or the plan ran out.
+        // Re-solving every step would overwrite the Raphael opening with a weaker 600ms MCTS line.
+        var special      = state.Condition != SynthCondition.Normal;
+        var resolveNow   = state.StepCount > 1 && state.StepCount != _lastResolveStep
+                           && (planLost || planDone || special);
+        if (Plugin.Config.PreferHq && _input != null && _planTask == null && craftOngoing && resolveNow)
         {
             _lastResolveStep = state.StepCount;
             StartLiveResolve(state);
@@ -314,18 +327,19 @@ public sealed class CraftExecutor : IDisposable
         {
             if (currentRecipeId == 0)
                 currentRecipeId = DetectRecipeId(state);
-            if (currentRecipeId != 0)
+            if (currentRecipeId != 0 && ReadCrafterStats() is { } st)
             {
-                // Seed from a rotation the Sim bot learned for this recipe, so the craft
-                // starts instantly with a vetted line instead of waiting on a cold solve.
-                var learned = RotationCache.Get(currentRecipeId);
+                // Seed instantly from a cached rotation solved at THESE stats (the sim bot or a
+                // prior craft's Raphael opening) — full Raphael quality, no cold-solve wait.
+                var learned = RotationCache.Get(currentRecipeId, st.Craftsmanship, st.Control, st.CP, st.Level);
                 if (learned is { Length: > 0 })
                 {
                     plannedRotation = learned;
                     planStep        = 0;
-                    Service.Log.Information($"[GilMaster] Seeded from learned sim rotation ({learned.Length} steps) for recipe {currentRecipeId}.");
+                    Service.Log.Information($"[GilMaster] Seeded cached Raphael rotation ({learned.Length} steps) for recipe {currentRecipeId}.");
                 }
-                StartPlanAsync(); // still build _input + refine via adaptive re-solve
+                // Builds _input (needed for re-solves) and, if not seeded, kicks the Raphael opening.
+                StartPlanAsync(st.Craftsmanship, st.Control, st.CP, st.Level);
             }
         }
 
@@ -426,13 +440,11 @@ public sealed class CraftExecutor : IDisposable
 
     private unsafe ActionDef? PickAction(SynthState state, Buffs buffs, out bool isOverride)
     {
-        // Special-condition overrides (Excellent, Poor, Pliant, Good)
-        var cond = GetConditionOverride(state, buffs);
-        if (cond != null)
-        {
-            isOverride = true;
-            return cond;
-        }
+        // Special conditions (Good/Excellent/Poor/Pliant/…) are handled by the solver: a re-solve
+        // is kicked the moment a non-Normal condition appears (see the re-solve trigger in Tick),
+        // and the wait-gate holds until that fresh, condition-aware plan lands. We deliberately do
+        // NOT hand-code condition overrides here anymore — they pre-empted and could contradict
+        // the solver, and didn't advance combo state (a desync that caused real bugs).
 
         // Follow the planned rotation. We do NOT skip an action merely because it's busy this
         // instant (status 579/571 mid-animation) — the fire loop waits and retries. But we DO
@@ -481,65 +493,54 @@ public sealed class CraftExecutor : IDisposable
         Act.PrudentTouch or Act.PreparatoryTouch or Act.TrainedFinesse or Act.ByregotsBlessing or
         Act.Innovation or Act.GreatStrides or Act.Reflect;
 
-    private unsafe ActionDef? GetConditionOverride(SynthState s, Buffs b)
-    {
-        // Once quality is maxed there's nothing to gain from a condition-based quality play — and
-        // nothing to wait for by Observing a Poor turn. Returning Observe on a finished-quality
-        // craft is exactly what stalled it (Observe makes no progress and the craft never
-        // advanced). So gate every quality play on still needing quality; otherwise fall through
-        // to the plan, which just synthesises to finish.
-        bool needQuality = s.Quality < s.MaxQuality;
-        float qPct = s.MaxQuality > 0 ? (float)s.Quality / s.MaxQuality : 0f;
-        return s.Condition switch
-        {
-            // Excellent: maximise the quality window
-            SynthCondition.Excellent when needQuality && b.IQ >= 1 && qPct >= 0.3f && CanUseCraft(Act.ByregotsBlessing)
-                => Def(Act.ByregotsBlessing, true, "Byregot's (Excellent!)"),
-            SynthCondition.Excellent when needQuality
-                => Def(Act.BasicTouch, true, "Basic Touch (Excellent!)"),
-            // Poor: skip the bad turn — but only while we still want quality, and only if Observe
-            // is actually usable (else fall through and just synthesise).
-            SynthCondition.Poor when needQuality && CanUseCraft(Act.Observe)
-                => Def(Act.Observe, true, "Observe (Poor)"),
-            // Good: Precise Touch
-            SynthCondition.Good when needQuality && CanUseCraft(Act.PreciseTouch)
-                => Def(Act.PreciseTouch, true, "Precise Touch (Good)"),
-            // Pliant: cheap Manipulation — worth it while building quality or when durability is low.
-            SynthCondition.Pliant when !b.Manipulation && (needQuality || s.Durability <= 20) && CanUseAction(Act.Manipulation)
-                => Def(Act.Manipulation, false, "Manipulation (Pliant)"),
-            _ => null,
-        };
-    }
-
     // ── Planning ─────────────────────────────────────────────────────────────
 
     // Read game state on the Framework thread (Lumina sheets + player attributes),
     // then hand the solve off to a background Task. The solver posts its result back
     // via _planTask, polled each tick. StepDelay = 3.5 s and the greedy fallback covers
     // any early steps, so a slightly long solve never stalls the craft.
-    private unsafe void StartPlanAsync()
+    private unsafe void StartPlanAsync(int craftsmanship, int control, int cp, int level)
     {
-        // NQ uses the fast greedy CarefulSynthesis loop — no need to solve for quality.
+        // NQ uses the fast greedy synthesis loop — no need to solve for quality.
         if (!Plugin.Config.PreferHq) return;
 
-        var stats = ReadCrafterStats();
-        if (stats == null) return;
-        var (craftsmanship, control, cp, level) = stats.Value;
-
-        var input = CraftimizerBridge.BuildInput(craftsmanship, control, cp, level, currentRecipeId);
+        var input = CraftimizerBridge.BuildInput(
+            craftsmanship, control, cp, level, currentRecipeId, isSpecialist: ReadIsSpecialist());
         if (input == null)
         {
             Service.Log.Warning("[GilMaster] Could not build solver input — greedy fallback.");
             return;
         }
 
-        _input         = input;
+        _input     = input;
+        _planStats = (craftsmanship, control, cp, level);
+
+        // Already seeded a cached rotation? We only needed _input for re-solves — don't spend
+        // several seconds re-solving the opening from scratch.
+        if (plannedRotation != null) return;
+
         _pendingIsLive = false;
         _planStartedAt = DateTime.Now;
-        _planTask = Task.Run(() => CraftimizerBridge.Solve(input));
+        _planTask = Task.Run(() => CraftimizerBridge.SolveOpening(input)); // full Raphael, cached on adopt
         Service.Log.Information(
-            $"[GilMaster] Craftimizer solve started for recipe {currentRecipeId} " +
-            $"(cms={craftsmanship} ctrl={control} cp={cp} lv={level})");
+            $"[GilMaster] Raphael opening solve started for recipe {currentRecipeId} " +
+            $"(cms={craftsmanship} ctrl={control} cp={cp} lv={level}).");
+    }
+
+    // The player is a crafting specialist for a job when its Soul of the Crafter is equipped —
+    // that unlocks Heart and Soul / Careful Observation / Quick Innovation for the solver.
+    private static unsafe bool ReadIsSpecialist()
+    {
+        try
+        {
+            var inv = InventoryManager.Instance();
+            if (inv == null) return false;
+            var c = inv->GetInventoryContainer(InventoryType.EquippedItems);
+            if (c == null) return false;
+            var soul = c->GetInventorySlot(13); // 13 = soul crystal slot
+            return soul != null && soul->ItemId != 0;
+        }
+        catch { return false; }
     }
 
     // Kick a background solve from the LIVE mid-craft state so the next plan reflects the
@@ -605,6 +606,11 @@ public sealed class CraftExecutor : IDisposable
                 case 2191: fx.MuscleMemory   = p; break;
                 case 1164: fx.Manipulation   = p; break;
                 case 2190: fx.FinalAppraisal = p; break;
+                // Endwalker/Dawntrail skills the solver also models — without these a re-solve
+                // after they're active starts from a wrong state.
+                case 3812: fx.Expedience        = p;    break; // Expedience (Waste Not afterglow)
+                case 3813: fx.TrainedPerfection  = true; break; // next touch costs no durability
+                case 2665: fx.HeartAndSoul       = true; break; // specialist: treat a turn as Good
             }
         }
         return fx;

@@ -30,7 +30,7 @@ public static class CraftimizerBridge
     /// </summary>
     public static SimulationInput? BuildInput(
         int craftsmanship, int control, int cp, int level,
-        uint recipeId, int startingQuality = 0)
+        uint recipeId, int startingQuality = 0, bool isSpecialist = false)
     {
         var sheet = Service.DataManager.GetExcelSheet<LuminaRecipe>();
         var opt   = sheet.GetRowOrDefault(recipeId);
@@ -62,11 +62,24 @@ public static class CraftimizerBridge
             CP                 = cp,
             Level              = level,
             CanUseManipulation = level >= 65,   // Manipulation unlocks at 65
-            HasSplendorousBuff = false,         // conservative defaults; refine later if needed
-            IsSpecialist       = false,
+            HasSplendorousBuff = false,         // (Splendorous tool detection not wired yet)
+            IsSpecialist       = isSpecialist,  // enables Heart and Soul / Careful Observation / Quick Innovation
         };
 
         return new SimulationInput(stats, recipeInfo, startingQuality);
+    }
+
+    /// <summary>
+    /// The OPENING plan for a LIVE craft: a strong Raphael A* solve (the same brain Artisan runs
+    /// live), escalating from a fast pass to Raphael until full HQ. Runs on a background thread
+    /// while the greedy opener covers the first steps; the executor caches the result keyed by
+    /// recipe+stats so the next craft of this recipe starts instantly. Returns the combo-expanded
+    /// rotation, or empty on failure.
+    /// </summary>
+    public static List<ActionType> SolveOpening(SimulationInput input, CancellationToken token = default)
+    {
+        var best = SolveBest(input, tryHard: true, token);
+        return best is { } s ? s.Actions.ToList() : new List<ActionType>();
     }
 
     /// <summary>
