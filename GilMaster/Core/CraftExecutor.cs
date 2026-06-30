@@ -94,7 +94,9 @@ public sealed class CraftExecutor : IDisposable
     // craft step, force a Basic Synthesis to recover instead of stalling out to the 30s watchdog.
     private uint _stuckStep = uint.MaxValue;
     private DateTime _stepSeenAt = DateTime.MinValue;
-    private const double StuckTimeout = 10.0;
+    private const double StuckTimeout = 5.0;
+    private uint _stuckLoggedStep = uint.MaxValue;     // throttle the stuck warning to once/step
+    private uint _fireFailLoggedStep = uint.MaxValue;  // throttle the UseAction-failed warning
     // Completion tracking: the last valid synth state + whether progress ever reached max. A
     // craft that ends WITHOUT reaching max progress failed (out of durability) — and FFXIV still
     // consumes the materials — so it must not be counted as a successful craft.
@@ -396,17 +398,37 @@ public sealed class CraftExecutor : IDisposable
 
         if (next == null) return;
 
-        // Deadlock breaker: if an action couldn't be fired for StuckTimeout seconds on this step
-        // (e.g. a condition override the game rejects) and the craft still needs progress, force a
-        // Basic Synthesis so the craft keeps moving instead of stalling out to the watchdog.
+        // Recovery: if an action couldn't be fired for StuckTimeout seconds on this step, route
+        // AROUND it — skip to the next planned action (a stuck action is often followed by one that
+        // WILL fire); force a Basic Synthesis only when the plan is exhausted. Logged once per step,
+        // with the game's action-status code so the cause is diagnosable from the log.
         if (state.StepCount != _firedStep
             && (DateTime.Now - _stepSeenAt).TotalSeconds > StuckTimeout
             && state.Progress < state.MaxProgress)
         {
-            Service.Log.Warning(
-                $"[GilMaster] Step {state.StepCount} stuck {StuckTimeout:0}s on '{next.Value.Label}' — forcing Basic Synthesis to recover.");
-            next       = Def(Act.BasicSynthesis, true, "Basic Synthesis (recover)");
-            isOverride = true;
+            if (state.StepCount != _stuckLoggedStep)
+            {
+                _stuckLoggedStep = state.StepCount;
+                var srid    = ResolveId(next.Value.BaseId, next.Value.IsCraftAction);
+                var stype   = next.Value.IsCraftAction ? CSActionType.CraftAction : CSActionType.Action;
+                var sstatus = ActionManager.Instance()->GetActionStatus(stype, srid);
+                Service.Log.Warning(
+                    $"[GilMaster] Step {state.StepCount} couldn't fire '{next.Value.Label}' " +
+                    $"(type={stype} id={srid} status=0x{sstatus:X}) — routing around it.");
+            }
+            if (plannedRotation != null && planStep < plannedRotation.Length - 1)
+            {
+                planStep++;
+                next       = ActionTypeToDef(plannedRotation[planStep]);
+                isOverride = false;
+            }
+            else
+            {
+                next       = Def(Act.BasicSynthesis, true, "Basic Synthesis (recover)");
+                isOverride = true;
+            }
+            _stepSeenAt = DateTime.Now; // give the new action its own StuckTimeout window
+            if (next == null) return;
         }
 
         var act         = next.Value;
@@ -436,6 +458,12 @@ public sealed class CraftExecutor : IDisposable
                     _liveActionStates.MutateState(plannedRotation[planStep].Base());
                     planStep++;
                 }
+            }
+            else if (state.StepCount != _fireFailLoggedStep)
+            {
+                _fireFailLoggedStep = state.StepCount;
+                Service.Log.Warning(
+                    $"[GilMaster] UseAction returned false for '{act.Label}' (type={actionType} id={resolvedId}, status was 0) at step {state.StepCount}.");
             }
         }
         // status != 0 → action is busy/not ready this instant; just wait and retry next tick.
