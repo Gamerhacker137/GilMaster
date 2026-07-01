@@ -15,8 +15,10 @@ public static class CraftScore
 
     public static Result Score(CraftTrace t)
     {
-        if (!t.Completed)                     return new Result(-50, "FAIL", false, true);   // mats wasted
-        if (t.MaxQuality == 0)                return new Result( 50, "NQ done", false, false); // recipe has no HQ
+        if (!t.Completed)                     return new Result(-50, "FAIL", false, true);      // mats wasted
+        // A recipe that can't be HQ'd is a success at NQ — 0 quality is the intended outcome, not a
+        // fail. (This is why "Roof Tile" finishing at 0% shouldn't be penalised.)
+        if (t.MaxQuality == 0 || !t.CanHq)    return new Result( 50, "NQ (no HQ)", false, false);
         var qpct = Math.Clamp((float)t.FinalQuality / t.MaxQuality, 0f, 1f);
         var q    = (int)MathF.Round(qpct * 100);
         var hq   = t.ReachedMaxQuality || qpct >= 1f;

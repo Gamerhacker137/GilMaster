@@ -88,14 +88,14 @@ public static class SynthReader
     }
 
     /// <summary>Match the current job's recipes to the synth's max prog/qual/dur — same logic the executor uses.</summary>
-    public static (uint Id, string Name) DetectRecipe(Snapshot state)
+    public static (uint Id, string Name, bool CanHq) DetectRecipe(Snapshot state)
     {
         try
         {
             var player = Service.Objects.LocalPlayer;
-            if (player == null) return (0, "");
+            if (player == null) return (0, "", true);
             var craftType = (int)player.ClassJob.RowId - 8; // 0=CRP…7=CUL
-            if (craftType is < 0 or > 7) return (0, "");
+            if (craftType is < 0 or > 7) return (0, "", true);
 
             foreach (var recipe in Service.DataManager.GetExcelSheet<Recipe>())
             {
@@ -105,10 +105,11 @@ public static class SynthReader
                 var maxQual = (int)(lvl.Quality    * recipe.QualityFactor    / 100u);
                 var maxDur  = (int)(lvl.Durability * recipe.DurabilityFactor / 100u);
                 if (maxProg == (int)state.MaxProgress && maxQual == (int)state.MaxQuality && maxDur == (int)state.MaxDurability)
-                    return (recipe.RowId, recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? $"Recipe#{recipe.RowId}");
+                    return (recipe.RowId, recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? $"Recipe#{recipe.RowId}",
+                            recipe.CanHq || recipe.RequiredQuality > 0);
             }
         }
         catch (Exception ex) { Service.Log.Debug(ex, "[GilMaster] SynthReader.DetectRecipe failed"); }
-        return (0, "");
+        return (0, "", true);
     }
 }

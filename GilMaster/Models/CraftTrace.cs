@@ -20,6 +20,7 @@ public sealed class CraftTrace
     public uint MaxProgress   { get; set; }
     public uint MaxQuality    { get; set; }
     public uint MaxDurability { get; set; }
+    public bool CanHq         { get; set; } = true;   // false = recipe can't be HQ'd (0 quality is fine)
 
     public uint FinalProgress { get; set; }
     public uint FinalQuality  { get; set; }

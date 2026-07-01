@@ -111,7 +111,7 @@ public sealed class CraftWatcher : IDisposable
 
     private void Begin(SynthReader.Snapshot snap, SynthReader.Statuses stat, int cp, DateTime now)
     {
-        var (recipeId, recipeName) = SynthReader.DetectRecipe(snap);
+        var (recipeId, recipeName, canHq) = SynthReader.DetectRecipe(snap);
         var stats = SynthReader.CrafterStats() ?? (0, 0, 0, 0);
         var player = Service.Objects.LocalPlayer;
 
@@ -130,6 +130,7 @@ public sealed class CraftWatcher : IDisposable
             MaxProgress   = snap.MaxProgress,
             MaxQuality    = snap.MaxQuality,
             MaxDurability = snap.MaxDurability,
+            CanHq         = canHq,
         };
         stepSnap = snap; stepStat = stat; stepCp = cp; latestSnap = snap;
         lastStep = snap.Step; lastStepTime = now; startTime = now; lastAction = "";
@@ -193,11 +194,13 @@ public sealed class CraftWatcher : IDisposable
         int dDur  = (int)cur.Durability - (int)prev.Durability;
         int cpCost = prevCp - curCp;
 
-        // 1) Step-1 quality opener that grants no lasting buff: Reflect (or Trained Eye).
+        // 1) Step-1 quality openers, told apart by CP cost: Trained Eye (250 CP, lv80, instant max)
+        //    or Reflect (6 CP, lv69). At lower levels neither is available, so an 18 CP opener is
+        //    just a Basic Touch — fall through to the touch identifier rather than guessing Reflect.
         if (prevStep <= 1 && dQual > 0)
         {
-            if (cpCost >= 200 || dQual >= (int)cur.MaxQuality) return ("Trained Eye", false);
-            return ("Reflect", false);
+            if (cpCost >= 200) return ("Trained Eye", true);
+            if (cpCost <= 8)   return ("Reflect", true);
         }
 
         // 2) Delicate Synthesis — advances progress AND quality together.
