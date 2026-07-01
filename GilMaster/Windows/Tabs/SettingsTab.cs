@@ -109,6 +109,10 @@ public sealed class SettingsTab
             if (ImGui.Checkbox("Backload progress (finish progress last)", ref backload)) { c.BackloadProgress = backload; c.Save(); }
             Tip("Solve rotations that build ALL quality first and finish progress LAST — like Artisan — so a\ncraft can't complete before quality is done. Turning this off can end an HQ craft early at\npartial quality. Recommended: on.");
 
+            var maxq = c.MaxQualityMode;
+            if (ImGui.Checkbox("Max-quality solving (Raphael + Adversarial first)", ref maxq)) { c.MaxQualityMode = maxq; c.Save(); }
+            Tip("Lead with the Raphael A* + Adversarial solver (the exact one Artisan uses), aiming straight for\na reliable 100% HQ. Off = a faster MCTS pass first, escalating to Raphael only if it can't HQ\n(a bit quicker, slightly lower HQ on hard crafts). Recommended: on.");
+
             ImGui.Spacing();
             ImGui.TextDisabled("Auto-use before crafting (leave blank for none):");
             DrawConsumablePicker("Food", ref foodSearch, ref prevFood, ref foodMatches,

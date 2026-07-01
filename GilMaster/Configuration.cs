@@ -58,6 +58,11 @@ public sealed class Configuration : IPluginConfiguration
     // interleave progress, which can end an HQ craft early at partial quality.
     public bool BackloadProgress { get; set; } = true;
 
+    // Max-quality solving: lead with the Raphael A* + Adversarial solver (the one Artisan uses),
+    // aiming straight for a reliable 100% HQ, instead of leading with the faster/weaker MCTS pass.
+    // Off = fast MCTS first, escalating to Raphael only if it can't HQ (quicker, slightly lower HQ).
+    public bool MaxQualityMode { get; set; } = true;
+
     // Craft tab
     public bool ShowBasicRotationHints { get; set; } = true;
     public int CraftQuantity { get; set; } = 1;

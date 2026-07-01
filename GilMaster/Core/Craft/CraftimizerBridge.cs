@@ -173,6 +173,16 @@ public static class CraftimizerBridge
     /// </summary>
     public static SolverSolution? SolveBest(SimulationInput input, bool tryHard, CancellationToken token = default)
     {
+        // Max-quality: lead with the Raphael A* + Adversarial solver (the one Artisan uses) so we aim
+        // straight for a reliable 100% HQ instead of settling for a weaker MCTS line. Only fall back to
+        // the fast/genetic passes if even Raphael couldn't fully HQ (a very tight craft) — keep the best.
+        if (tryHard && Plugin.Config.MaxQualityMode)
+        {
+            var raph = SolveWith(input, RaphaelConfig, token);
+            if (IsFullHq(raph)) return raph;
+            return Best(raph, SolveWith(input, StrongConfig, token));
+        }
+
         var best = SolveWith(input, FastConfig, token);
         if (!tryHard || IsFullHq(best)) return best;
 
