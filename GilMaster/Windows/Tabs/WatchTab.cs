@@ -48,7 +48,17 @@ public sealed class WatchTab
 
         ImGui.Separator();
 
-        var traces = watcher.Traces;
+        if (ImGui.BeginTabBar("##watchmode"))
+        {
+            if (ImGui.BeginTabItem("Traces"))     { DrawTraces();     ImGui.EndTabItem(); }
+            if (ImGui.BeginTabItem("Scoreboard")) { DrawScoreboard(); ImGui.EndTabItem(); }
+            ImGui.EndTabBar();
+        }
+    }
+
+    private void DrawTraces()
+    {
+        var traces = Plugin.CraftWatcher.Traces;
         if (traces.Count == 0)
         {
             ImGui.TextDisabled("No recorded crafts yet.");
@@ -104,6 +114,97 @@ public sealed class WatchTab
         // ── Comparison panel ─────────────────────────────────────────────────
         if (compareRecipe == t.RecipeId && (compareTask != null || compareResult != null))
             DrawCompare(t);
+    }
+
+    // ── Scoreboard: GilMaster vs Artisan, recipe by recipe ───────────────────
+    private void DrawScoreboard()
+    {
+        var traces = Plugin.CraftWatcher.Traces.Where(t => t.RecipeId != 0).ToList();
+        if (traces.Count == 0)
+        {
+            ImGui.TextDisabled("No scored crafts yet — craft with GilMaster and Artisan to compare.");
+            return;
+        }
+
+        ImGui.TextWrapped("HQ = 100, partial quality = quality%, a failed craft = −50. Both use the same Raphael "
+                        + "solver, so any GilMaster loss is an execution or solver-input bug — that's the whole point.");
+
+        // Best run per (recipe, source).
+        static CraftTrace? Best(IEnumerable<CraftTrace> xs) =>
+            xs.OrderByDescending(x => CraftScore.Score(x).Points).ThenBy(x => x.Steps.Count).FirstOrDefault();
+
+        int gWins = 0, aWins = 0, ties = 0, gPts = 0, aPts = 0;
+        var rows = new List<(string Recipe, CraftTrace? G, CraftTrace? A)>();
+        foreach (var grp in traces.GroupBy(t => t.RecipeId))
+        {
+            var g = Best(grp.Where(t => t.Source == "GilMaster"));
+            var a = Best(grp.Where(t => t.Source != "GilMaster"));
+            rows.Add((grp.First().RecipeName, g, a));
+            if (g != null) gPts += CraftScore.Score(g).Points;
+            if (a != null) aPts += CraftScore.Score(a).Points;
+            if (g != null && a != null)
+            {
+                var c = CraftScore.Compare(g, a);
+                if (c > 0) gWins++; else if (c < 0) aWins++; else ties++;
+            }
+        }
+
+        // Tally banner.
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.5f, 0.8f, 1f, 1f), $"GilMaster {gPts}");
+        ImGui.SameLine(); ImGui.TextDisabled("vs");
+        ImGui.SameLine(); ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f), $"Artisan {aPts}");
+        ImGui.SameLine(); ImGui.TextDisabled($"   ·   head-to-head {gWins}–{aWins}" + (ties > 0 ? $" ({ties} tie)" : ""));
+        ImGui.Spacing();
+
+        if (!ImGui.BeginTable("##score", 4,
+            ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY, new Vector2(0, -1)))
+            return;
+
+        ImGui.TableSetupScrollFreeze(0, 1);
+        ImGui.TableSetupColumn("Recipe",    ImGuiTableColumnFlags.WidthStretch, 3);
+        ImGui.TableSetupColumn("GilMaster", ImGuiTableColumnFlags.WidthFixed, 120);
+        ImGui.TableSetupColumn("Artisan",   ImGuiTableColumnFlags.WidthFixed, 120);
+        ImGui.TableSetupColumn("Winner",    ImGuiTableColumnFlags.WidthFixed, 100);
+        ImGui.TableHeadersRow();
+
+        foreach (var (recipe, g, a) in rows.OrderBy(r => r.Recipe, StringComparer.Ordinal))
+        {
+            ImGui.TableNextRow();
+
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextUnformatted(recipe);
+
+            ImGui.TableSetColumnIndex(1);
+            DrawScoreCell(g);
+
+            ImGui.TableSetColumnIndex(2);
+            DrawScoreCell(a);
+
+            ImGui.TableSetColumnIndex(3);
+            if (g != null && a != null)
+            {
+                var c = CraftScore.Compare(g, a);
+                if (c > 0) ImGui.TextColored(new Vector4(0.5f, 0.8f, 1f, 1f), "GilMaster");
+                else if (c < 0) ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f), "Artisan");
+                else ImGui.TextDisabled("tie");
+            }
+            else if (g == null) ImGui.TextDisabled("(run GilMaster)");
+            else ImGui.TextDisabled("(run Artisan)");
+        }
+        ImGui.EndTable();
+    }
+
+    private static void DrawScoreCell(CraftTrace? t)
+    {
+        if (t == null) { ImGui.TextDisabled("—"); return; }
+        var r = CraftScore.Score(t);
+        var col = r.Failed ? new Vector4(1f, 0.45f, 0.4f, 1f)
+                : r.Hq     ? new Vector4(0.3f, 1f, 0.4f, 1f)
+                           : new Vector4(0.85f, 0.85f, 0.6f, 1f);
+        ImGui.TextColored(col, $"{r.Points}  {r.Grade}");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"{t.Steps.Count} steps · {t.DurationMs / 1000f:F0}s · qual {t.FinalQuality}/{t.MaxQuality}");
     }
 
     private void DrawSteps(CraftTrace t)
