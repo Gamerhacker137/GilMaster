@@ -102,8 +102,8 @@ public sealed class CraftExecutor : IDisposable
     // consumes the materials — so it must not be counted as a successful craft.
     private SynthState _lastValidState;
     private bool _sawCompletion;
-    // Stats the current opening plan was solved for — used to cache it (keyed by recipe+stats).
-    private (int Cms, int Ctrl, int Cp, int Lvl) _planStats;
+    // Stats the current opening plan was solved for — used to cache it (keyed by recipe+stats+start).
+    private (int Cms, int Ctrl, int Cp, int Lvl, int StartQual) _planStats;
     // Combo/usage state, mutated as we execute planned actions, fed back into re-solves.
     private ActionStates _liveActionStates;
 
@@ -279,7 +279,7 @@ public sealed class CraftExecutor : IDisposable
             // Cache a completed OPENING (Raphael) plan keyed by recipe+stats, so the NEXT craft of
             // this recipe seeds it instantly — even if it arrived too late to use on this craft.
             if (!wasLive && plan is { Count: > 0 } && currentRecipeId != 0)
-                RotationCache.Store(currentRecipeId, plan, _planStats.Cms, _planStats.Ctrl, _planStats.Cp, _planStats.Lvl);
+                RotationCache.Store(currentRecipeId, plan, _planStats.Cms, _planStats.Ctrl, _planStats.Cp, _planStats.Lvl, _planStats.StartQual);
 
             // Initial plans assume a fresh craft, so only adopt at step 1. Adaptive
             // re-solves are computed FROM the current state, so adopt them immediately.
@@ -339,9 +339,13 @@ public sealed class CraftExecutor : IDisposable
                 currentRecipeId = DetectRecipeId(state);
             if (currentRecipeId != 0 && ReadCrafterStats() is { } st)
             {
-                // Seed instantly from a cached rotation solved at THESE stats (the sim bot or a
+                // HQ materials start the craft with quality already on the board — feed that to the
+                // solver so it plans the REMAINING quality (not all of it from zero). At step 1 the
+                // synth's quality readout is exactly this starting value.
+                var startQual = (int)state.Quality;
+                // Seed instantly from a cached rotation solved at THESE stats + start (the sim bot or a
                 // prior craft's Raphael opening) — full Raphael quality, no cold-solve wait.
-                var learned = RotationCache.Get(currentRecipeId, st.Craftsmanship, st.Control, st.CP, st.Level);
+                var learned = RotationCache.Get(currentRecipeId, st.Craftsmanship, st.Control, st.CP, st.Level, startQual);
                 if (learned is { Length: > 0 })
                 {
                     plannedRotation = learned;
@@ -349,7 +353,7 @@ public sealed class CraftExecutor : IDisposable
                     Service.Log.Information($"[GilMaster] Seeded cached Raphael rotation ({learned.Length} steps) for recipe {currentRecipeId}.");
                 }
                 // Builds _input (needed for re-solves) and, if not seeded, kicks the Raphael opening.
-                StartPlanAsync(st.Craftsmanship, st.Control, st.CP, st.Level);
+                StartPlanAsync(st.Craftsmanship, st.Control, st.CP, st.Level, startQual);
             }
         }
 
@@ -532,13 +536,13 @@ public sealed class CraftExecutor : IDisposable
     // then hand the solve off to a background Task. The solver posts its result back
     // via _planTask, polled each tick. StepDelay = 3.5 s and the greedy fallback covers
     // any early steps, so a slightly long solve never stalls the craft.
-    private unsafe void StartPlanAsync(int craftsmanship, int control, int cp, int level)
+    private unsafe void StartPlanAsync(int craftsmanship, int control, int cp, int level, int startingQuality = 0)
     {
         // NQ uses the fast greedy synthesis loop — no need to solve for quality.
         if (!Plugin.Config.PreferHq) return;
 
         var input = CraftimizerBridge.BuildInput(
-            craftsmanship, control, cp, level, currentRecipeId, isSpecialist: ReadIsSpecialist());
+            craftsmanship, control, cp, level, currentRecipeId, startingQuality, isSpecialist: ReadIsSpecialist());
         if (input == null)
         {
             Service.Log.Warning("[GilMaster] Could not build solver input — greedy fallback.");
@@ -546,7 +550,7 @@ public sealed class CraftExecutor : IDisposable
         }
 
         _input     = input;
-        _planStats = (craftsmanship, control, cp, level);
+        _planStats = (craftsmanship, control, cp, level, startingQuality);
 
         // Already seeded a cached rotation? We only needed _input for re-solves — don't spend
         // several seconds re-solving the opening from scratch.

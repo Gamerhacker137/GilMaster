@@ -193,32 +193,42 @@ public sealed class CraftWatcher : IDisposable
         int dDur  = (int)cur.Durability - (int)prev.Durability;
         int cpCost = prevCp - curCp;
 
-        // 1) A newly-applied buff is unambiguous.
-        if (NewBuff(pStat, cStat) is { } buff) return (buff, true);
-
-        // 2) Step-1 quality opener that grants no lasting buff: Reflect (or Trained Eye).
+        // 1) Step-1 quality opener that grants no lasting buff: Reflect (or Trained Eye).
         if (prevStep <= 1 && dQual > 0)
         {
             if (cpCost >= 200 || dQual >= (int)cur.MaxQuality) return ("Trained Eye", false);
             return ("Reflect", false);
         }
 
-        // 3) Master's Mend — durability restored, no progress/quality.
-        if (dDur > 0 && dProg == 0 && dQual == 0) return ("Master's Mend", cpCost >= 80);
-
-        // 4) Delicate Synthesis — advances progress AND quality together.
+        // 2) Delicate Synthesis — advances progress AND quality together.
         if (dProg > 0 && dQual > 0) return ("Delicate Synthesis", true);
 
-        // 5) A touch (quality up).
+        // 3) A touch (quality up).
         if (dQual > 0) return (IdentifyTouch(cpCost, prev.Condition, pStat.InnerQuiet, prevAction, level), false);
 
-        // 6) A synthesis (progress up).
-        if (dProg > 0) return (IdentifySynth(cpCost), false);
+        // 4) Master's Mend — durability restored.
+        if (dDur > 0 && dProg == 0) return ("Master's Mend", cpCost >= 80);
 
-        // 7) No progress/quality change.
-        if (cpCost < 0) return ("Tricks of the Trade", false); // CP restored
-        if (cpCost <= 7) return ("Observe", false);
-        return ("(unknown)", false);
+        // 5) A synthesis (progress up). Muscle Memory (6 CP) also grants its buff.
+        if (dProg > 0) return (IdentifySynth(cpCost), cpCost == 6);
+
+        // 6) No progress/quality/durability gain → a buff or utility. Prefer the status (exact) but
+        //    fall back to the CP cost — CP is deducted atomically with the action, so unlike the
+        //    status list it never lags a frame (which used to leave these as "(unknown)" or shift
+        //    a buff label onto the next step).
+        if (NewBuff(pStat, cStat) is { } buff) return (buff, true);
+        if (cpCost < 0) return ("Tricks of the Trade", false); // Good-condition CP refund
+        return cpCost switch
+        {
+            96 => ("Manipulation", true),
+            98 => ("Waste Not II", true),
+            56 => ("Waste Not", true),
+            32 => ("Great Strides", true),
+            18 => ("Veneration/Innovation", false),
+            1  => ("Final Appraisal", false),
+            <= 7 and >= 0 => ("Observe", false),
+            _  => ("(unknown)", false),
+        };
     }
 
     private static string IdentifyTouch(int cpCost, int condition, int prevIq, string prevAction, int level)

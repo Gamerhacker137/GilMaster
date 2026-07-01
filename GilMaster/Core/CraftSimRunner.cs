@@ -121,7 +121,7 @@ public sealed class CraftSimRunner : IDisposable
 
                         // Feed what we learned back into real crafting: cache the rotation for
                         // any craft we could complete (so the live crafter seeds from it).
-                        if (completed) RotationCache.Store(rec.RecipeId, s.Actions, craftsmanship, control, cp, level);
+                        if (completed) RotationCache.Store(rec.RecipeId, s.Actions, craftsmanship, control, cp, level, startQual: 0);
                     }
                     else { score = -10; outcome = "FAIL"; }
                 }

@@ -19,7 +19,7 @@ namespace GilMaster.Core;
 /// </summary>
 public static class RotationCache
 {
-    private sealed record Entry(int[] Actions, int Cms, int Ctrl, int Cp, int Level);
+    private sealed record Entry(int[] Actions, int Cms, int Ctrl, int Cp, int Level, int StartQual);
 
     private static readonly Dictionary<uint, Entry> Cache = new();
 
@@ -28,22 +28,23 @@ public static class RotationCache
 
     public static int Count { get { lock (Cache) return Cache.Count; } }
 
-    public static void Store(uint recipeId, IEnumerable<CAction> actions, int cms, int ctrl, int cp, int level)
+    public static void Store(uint recipeId, IEnumerable<CAction> actions, int cms, int ctrl, int cp, int level, int startQual)
     {
         if (recipeId == 0) return;
         var arr = actions.Select(a => (int)a).ToArray();
         if (arr.Length == 0) return;
-        lock (Cache) Cache[recipeId] = new Entry(arr, cms, ctrl, cp, level);
+        lock (Cache) Cache[recipeId] = new Entry(arr, cms, ctrl, cp, level, startQual);
     }
 
-    public static CAction[]? Get(uint recipeId, int cms, int ctrl, int cp, int level)
+    public static CAction[]? Get(uint recipeId, int cms, int ctrl, int cp, int level, int startQual)
     {
         lock (Cache)
         {
             if (!Cache.TryGetValue(recipeId, out var e)) return null;
-            // Only replay a rotation solved at the SAME stats — different gear/food changes the
-            // math, so a stale-stat rotation could fail to complete or waste CP.
-            if (e.Cms != cms || e.Ctrl != ctrl || e.Cp != cp || e.Level != level) return null;
+            // Only replay a rotation solved at the SAME stats AND starting quality — different gear/
+            // food changes the math, and HQ materials start the craft with quality already on the
+            // board, so a rotation solved from a different start could fail to complete or waste CP.
+            if (e.Cms != cms || e.Ctrl != ctrl || e.Cp != cp || e.Level != level || e.StartQual != startQual) return null;
             return e.Actions.Select(i => (CAction)i).ToArray();
         }
     }
