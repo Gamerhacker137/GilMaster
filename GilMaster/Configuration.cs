@@ -53,6 +53,11 @@ public sealed class Configuration : IPluginConfiguration
     // "What can I make?" / missing-material checks include your whole cross-character stash.
     public bool IncludeRetainerInventory { get; set; } = false;
 
+    // Backload progress in the solver: build ALL quality first and finish progress LAST, so a craft
+    // can never complete before quality is done (this is Artisan's default). Off = the solver may
+    // interleave progress, which can end an HQ craft early at partial quality.
+    public bool BackloadProgress { get; set; } = true;
+
     // Craft tab
     public bool ShowBasicRotationHints { get; set; } = true;
     public int CraftQuantity { get; set; } = 1;

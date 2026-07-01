@@ -105,6 +105,10 @@ public sealed class SettingsTab
             if (ImGui.Checkbox("Record crafts in the Watch tab", ref watch)) { c.ShowCraftWatcher = watch; c.Save(); }
             Tip("Passively record every synthesis — yours or Artisan's — step by step in the Watch tab, so you can\ndiff how a craft ran against what our solver would do. Off = no recording and the Watch tab is hidden.");
 
+            var backload = c.BackloadProgress;
+            if (ImGui.Checkbox("Backload progress (finish progress last)", ref backload)) { c.BackloadProgress = backload; c.Save(); }
+            Tip("Solve rotations that build ALL quality first and finish progress LAST — like Artisan — so a\ncraft can't complete before quality is done. Turning this off can end an HQ craft early at\npartial quality. Recommended: on.");
+
             ImGui.Spacing();
             ImGui.TextDisabled("Auto-use before crafting (leave blank for none):");
             DrawConsumablePicker("Food", ref foodSearch, ref prevFood, ref foodMatches,

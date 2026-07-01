@@ -98,16 +98,18 @@ public static class CraftimizerBridge
     public static List<ActionType> SolveFrom(SimulationState state, CancellationToken token = default)
         => SolveFromConfig(state, SolverConfig.RecipeNoteDefault with
         {
-            MaxThreadCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
+            MaxThreadCount   = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
+            BackloadProgress = Plugin.Config.BackloadProgress,   // quality first, finish progress last (Artisan default)
         }, token);
 
     // Time-bounded config for per-step live re-solves: it must land fast (well under the
     // gap between craft actions) so the executor always acts on a FRESH decision instead of
     // a stale plan. The full config is for the opening plan only.
-    private static readonly SolverConfig LiveConfig = SolverConfig.RecipeNoteDefault with
+    private static SolverConfig LiveConfig => SolverConfig.RecipeNoteDefault with
     {
-        MaxThreadCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
-        MaxTimeMs      = 600,
+        MaxThreadCount   = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
+        MaxTimeMs        = 600,
+        BackloadProgress = Plugin.Config.BackloadProgress,
     };
 
     /// <summary>Fast, time-bounded re-solve from the live mid-craft state (per-step decisions).</summary>
@@ -148,11 +150,12 @@ public static class CraftimizerBridge
 
     // A fast solver config for bulk simulation/benchmarking — fewer iterations + a hard
     // time cap so we can score thousands of recipes in reasonable time.
-    private static readonly SolverConfig FastConfig = SolverConfig.RecipeNoteDefault with
+    private static SolverConfig FastConfig => SolverConfig.RecipeNoteDefault with
     {
-        Iterations     = 20_000,
-        MaxThreadCount = 1,        // many small solves in parallel across recipes instead
-        MaxTimeMs      = 1_500,
+        Iterations       = 20_000,
+        MaxThreadCount   = 1,        // many small solves in parallel across recipes instead
+        MaxTimeMs        = 1_500,
+        BackloadProgress = Plugin.Config.BackloadProgress,
     };
 
     /// <summary>
@@ -180,16 +183,18 @@ public static class CraftimizerBridge
         return best;
     }
 
-    private static readonly SolverConfig StrongConfig = SolverConfig.RecipeNoteDefault with
+    private static SolverConfig StrongConfig => SolverConfig.RecipeNoteDefault with
     {
-        MaxThreadCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
-        MaxTimeMs      = 6_000,
+        MaxThreadCount   = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
+        MaxTimeMs        = 6_000,
+        BackloadProgress = Plugin.Config.BackloadProgress,
     };
 
-    private static readonly SolverConfig RaphaelConfig = SolverConfig.EditorDefault with
+    private static SolverConfig RaphaelConfig => SolverConfig.EditorDefault with
     {
-        MaxThreadCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
-        MaxTimeMs      = 6_000,
+        MaxThreadCount   = Math.Clamp(Environment.ProcessorCount / 2, 1, 8),
+        MaxTimeMs        = 6_000,
+        BackloadProgress = Plugin.Config.BackloadProgress,
     };
 
     private static SolverSolution? SolveWith(SimulationInput input, SolverConfig config, CancellationToken token)
