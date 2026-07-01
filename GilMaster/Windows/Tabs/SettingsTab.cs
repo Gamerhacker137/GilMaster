@@ -101,6 +101,10 @@ public sealed class SettingsTab
             if (ImGui.Checkbox("Quick-synth NQ crafts (when 'Prefer HQ' is off)", ref qs)) { c.QuickSynthNq = qs; c.Save(); }
             Tip("Use the game's fast batch Quick Synthesis for eligible NQ recipes instead of crafting one\naction at a time. Falls back to the normal crafter when a recipe can't be quick-synthed.");
 
+            var watch = c.ShowCraftWatcher;
+            if (ImGui.Checkbox("Record crafts in the Watch tab", ref watch)) { c.ShowCraftWatcher = watch; c.Save(); }
+            Tip("Passively record every synthesis — yours or Artisan's — step by step in the Watch tab, so you can\ndiff how a craft ran against what our solver would do. Off = no recording and the Watch tab is hidden.");
+
             ImGui.Spacing();
             ImGui.TextDisabled("Auto-use before crafting (leave blank for none):");
             DrawConsumablePicker("Food", ref foodSearch, ref prevFood, ref foodMatches,

@@ -18,6 +18,7 @@ public sealed class MainWindow : Window, IDisposable
     private readonly GearTab gearTab = new();
     private readonly LevesTab levesTab = new();
     private readonly SimTab simTab = new();
+    private readonly WatchTab watchTab = new();
     private readonly LevelTab levelTab = new();
     private readonly SettingsTab settingsTab = new();
 
@@ -176,6 +177,13 @@ public sealed class MainWindow : Window, IDisposable
             if (Plugin.Config.ShowSimTab && ImGui.BeginTabItem("Sim"))
             {
                 DrawTabBody("Sim", simTab.Draw);
+                ImGui.EndTabItem();
+            }
+
+            // Crafter watcher — records synthesis runs to diff against our solver. Toggle in Settings ▸ Crafting.
+            if (Plugin.Config.ShowCraftWatcher && ImGui.BeginTabItem("Watch"))
+            {
+                DrawTabBody("Watch", watchTab.Draw);
                 ImGui.EndTabItem();
             }
 

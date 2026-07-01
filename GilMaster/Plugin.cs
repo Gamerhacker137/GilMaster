@@ -15,6 +15,7 @@ public sealed class Plugin : IDalamudPlugin
     public static GatheringLocator GatheringLocator { get; private set; } = null!;
     public static LevelingAdvisor LevelingAdvisor { get; private set; } = null!;
     public static CraftExecutor      CraftExecutor      { get; private set; } = null!;
+    public static CraftWatcher       CraftWatcher       { get; private set; } = null!;
     public static CraftStarter       CraftStarter       { get; private set; } = null!;
     public static CraftQueue         CraftQueue         { get; private set; } = null!;
     public static CraftQueueExecutor CraftQueueExecutor { get; private set; } = null!;
@@ -51,6 +52,7 @@ public sealed class Plugin : IDalamudPlugin
         ProfitEngine = new ProfitEngine();
         LevelingAdvisor = new LevelingAdvisor();
         CraftExecutor      = new CraftExecutor();
+        CraftWatcher       = new CraftWatcher();
         CraftStarter       = new CraftStarter();
         CraftQueue         = new CraftQueue();
         CraftQueueExecutor = new CraftQueueExecutor();
@@ -111,6 +113,7 @@ public sealed class Plugin : IDalamudPlugin
         mainWindow.Dispose();
         CraftQueueExecutor.Dispose();
         CraftExecutor.Dispose();
+        CraftWatcher.Dispose();
         CraftStarter.Dispose();
         SellEngine.Dispose();
         FlipEngine.Dispose();

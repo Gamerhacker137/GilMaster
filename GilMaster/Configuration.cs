@@ -88,5 +88,10 @@ public sealed class Configuration : IPluginConfiguration
     // warming the rotation cache, is exposed as a Settings button).
     public bool ShowSimTab { get; set; } = false;
 
+    // Crafter watcher: passively record every synthesis (yours OR Artisan's) step-by-step so you can
+    // diff how a craft actually ran against what our Raphael solver would do — used to harden the
+    // executor (e.g. the buff-firing timing). When off, no recording and the Watch tab is hidden.
+    public bool ShowCraftWatcher { get; set; } = true;
+
     public void Save() => Service.PluginInterface.SavePluginConfig(this);
 }
