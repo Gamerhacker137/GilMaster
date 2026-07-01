@@ -28,11 +28,15 @@ public sealed class CraftWatcher : IDisposable
     public int     LiveSteps   => active?.Steps.Count ?? 0;
     public string? LiveRecipe  => active?.RecipeName;
 
-    // In-flight craft.
+    // In-flight craft. We hold the state at the START of the current step (stepSnap/stepStat/stepCp)
+    // so each action's CP cost and stat delta are attributed to the right step — the action fires
+    // mid-step, so sampling every frame would read the post-deduction CP and report cost 0. latestSnap
+    // tracks the most recent frame purely for completion detection at craft end.
     private CraftTrace? active;
-    private SynthReader.Snapshot lastSnap;
-    private SynthReader.Statuses lastStat;
-    private int lastCp;
+    private SynthReader.Snapshot stepSnap;
+    private SynthReader.Statuses stepStat;
+    private int stepCp;
+    private SynthReader.Snapshot latestSnap;
     private uint lastStep;
     private DateTime lastStepTime;
     private DateTime startTime;
@@ -65,33 +69,44 @@ public sealed class CraftWatcher : IDisposable
             return;
         }
 
-        // Every crafting action advances the step counter by one — so a step change means exactly
-        // one action happened between lastSnap (at lastStep) and now. Reconstruct and record it.
+        // A batch craft keeps the Crafting flag set between items but resets the step counter to 1.
+        // A step going BACKWARDS means a new craft started — close the old trace (using the last state
+        // we saw, not this fresh one) and open a new one.
+        if (snap.Step < lastStep)
+        {
+            FinalizeTrace();
+            Begin(snap, stat, cp, now);
+            return;
+        }
+
+        latestSnap = snap; // track most-recent frame for completion detection
+
+        // Step advanced by one → exactly one action happened during the previous step. Reconstruct it
+        // by diffing the START-of-previous-step state (held) against this step's start state.
         if (snap.Step != lastStep)
         {
-            var (label, exact) = Identify(lastSnap, snap, lastStat, stat, lastCp, cp, lastStep, lastAction);
+            var (label, exact) = Identify(stepSnap, snap, stepStat, stat, stepCp, cp, lastStep, lastAction, active.Level);
             active.Steps.Add(new CraftStepRecord
             {
                 Step       = (int)lastStep,
                 Action     = label,
                 Exact      = exact,
-                Condition  = SynthReader.ConditionName(lastSnap.Condition),
+                Condition  = SynthReader.ConditionName(stepSnap.Condition),
                 Progress   = snap.Progress,
                 Quality    = snap.Quality,
                 Durability = snap.Durability,
                 Cp         = cp,
-                DProgress  = (int)snap.Progress - (int)lastSnap.Progress,
-                DQuality   = (int)snap.Quality  - (int)lastSnap.Quality,
-                CpCost     = lastCp - cp,
+                DProgress  = (int)snap.Progress - (int)stepSnap.Progress,
+                DQuality   = (int)snap.Quality  - (int)stepSnap.Quality,
+                CpCost     = stepCp - cp,
                 GapMs      = (int)(now - lastStepTime).TotalMilliseconds,
-                Buffs      = BuffSummary(lastStat),
+                Buffs      = BuffSummary(stepStat),
             });
             lastAction   = label;
             lastStep     = snap.Step;
             lastStepTime = now;
+            stepSnap = snap; stepStat = stat; stepCp = cp; // start of the new step
         }
-
-        lastSnap = snap; lastStat = stat; lastCp = cp;
     }
 
     private void Begin(SynthReader.Snapshot snap, SynthReader.Statuses stat, int cp, DateTime now)
@@ -116,7 +131,7 @@ public sealed class CraftWatcher : IDisposable
             MaxQuality    = snap.MaxQuality,
             MaxDurability = snap.MaxDurability,
         };
-        lastSnap = snap; lastStat = stat; lastCp = cp;
+        stepSnap = snap; stepStat = stat; stepCp = cp; latestSnap = snap;
         lastStep = snap.Step; lastStepTime = now; startTime = now; lastAction = "";
     }
 
@@ -126,10 +141,10 @@ public sealed class CraftWatcher : IDisposable
         active = null;
         if (t.Steps.Count == 0) return; // nothing meaningful captured
 
-        t.FinalProgress     = lastSnap.Progress;
-        t.FinalQuality      = lastSnap.Quality;
-        t.Completed         = lastSnap.MaxProgress > 0 && lastSnap.Progress >= lastSnap.MaxProgress;
-        t.ReachedMaxQuality = lastSnap.MaxQuality > 0 && lastSnap.Quality >= lastSnap.MaxQuality;
+        t.FinalProgress     = latestSnap.Progress;
+        t.FinalQuality      = latestSnap.Quality;
+        t.Completed         = latestSnap.MaxProgress > 0 && latestSnap.Progress >= latestSnap.MaxProgress;
+        t.ReachedMaxQuality = latestSnap.MaxQuality > 0 && latestSnap.Quality >= latestSnap.MaxQuality;
         t.DurationMs        = (long)(DateTime.Now - startTime).TotalMilliseconds;
 
         traces.Insert(0, t);
@@ -171,7 +186,7 @@ public sealed class CraftWatcher : IDisposable
     private static (string, bool) Identify(
         SynthReader.Snapshot prev, SynthReader.Snapshot cur,
         SynthReader.Statuses pStat, SynthReader.Statuses cStat,
-        int prevCp, int curCp, uint prevStep, string prevAction)
+        int prevCp, int curCp, uint prevStep, string prevAction, int level)
     {
         int dProg = (int)cur.Progress - (int)prev.Progress;
         int dQual = (int)cur.Quality - (int)prev.Quality;
@@ -195,7 +210,7 @@ public sealed class CraftWatcher : IDisposable
         if (dProg > 0 && dQual > 0) return ("Delicate Synthesis", true);
 
         // 5) A touch (quality up).
-        if (dQual > 0) return (IdentifyTouch(cpCost, prev.Condition, pStat.InnerQuiet, prevAction), false);
+        if (dQual > 0) return (IdentifyTouch(cpCost, prev.Condition, pStat.InnerQuiet, prevAction, level), false);
 
         // 6) A synthesis (progress up).
         if (dProg > 0) return (IdentifySynth(cpCost), false);
@@ -206,7 +221,7 @@ public sealed class CraftWatcher : IDisposable
         return ("(unknown)", false);
     }
 
-    private static string IdentifyTouch(int cpCost, int condition, int prevIq, string prevAction)
+    private static string IdentifyTouch(int cpCost, int condition, int prevIq, string prevAction, int level)
     {
         // Precise Touch is only usable on Good/Excellent (condition 1/2).
         if (condition is 1 or 2 && cpCost is >= 14 and <= 20) return "Precise Touch";
@@ -218,9 +233,11 @@ public sealed class CraftWatcher : IDisposable
             46 => "Advanced Touch",
             32 => prevIq >= 10 ? "Trained Finesse" : "Standard Touch",
             0  => "Hasty Touch",
-            18 => prevAction.EndsWith("Basic Touch")    ? "Standard Touch"
-                : prevAction.EndsWith("Standard Touch") ? "Advanced Touch"
-                : "Basic Touch",
+            // 18 CP is Basic Touch, or a comboed Standard/Advanced Touch. Only guess the combo when
+            // those skills are actually unlocked (Standard 18, Advanced 84) — else it's Basic Touch.
+            18 when level >= 18 && prevAction.EndsWith("Basic Touch")               => "Standard Touch",
+            18 when level >= 84 && prevAction.EndsWith("Standard Touch")            => "Advanced Touch",
+            18 => "Basic Touch",
             _  => "Touch (?)",
         };
     }
