@@ -183,28 +183,10 @@ public sealed class GearTab
     };
 
     private void DrawContextMenu(GearPiece p)
-    {
-        if (!ImGui.BeginPopupContextItem($"##gearctx{p.ItemId}")) return;
-        ImGui.TextDisabled(p.Name);
-        ImGui.Separator();
-        if (p.Craftable && ImGui.MenuItem("Add to a new Best Kit list")) AddKitToList([p]);
-        if (ImGui.MenuItem("Link in chat")) LinkItemInChat(p.ItemId, p.Name);
-        if (ImGui.MenuItem("Copy name")) ImGui.SetClipboardText(p.Name);
-        if (ImGui.MenuItem("Open on Universalis"))
-            Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{p.ItemId}");
-        ImGui.EndPopup();
-    }
-
-    private static void LinkItemInChat(uint itemId, string name)
-    {
-        try
+        => ItemActions.ContextMenu($"##gearctx{p.ItemId}", p.ItemId, p.Name, p.Craftable, extra: () =>
         {
-            var s = new SeString(new ItemPayload(itemId, false),
-                new TextPayload($"{(char)SeIconChar.LinkMarker}{name}"), RawPayload.LinkTerminator);
-            Service.ChatGui.Print(s);
-        }
-        catch (Exception ex) { Service.Log.Warning(ex, "link item failed"); }
-    }
+            if (p.Craftable && ImGui.MenuItem("Add to a new Best Kit list")) AddKitToList([p]);
+        });
 
     private static void DrawIcon(ushort iconId)
     {

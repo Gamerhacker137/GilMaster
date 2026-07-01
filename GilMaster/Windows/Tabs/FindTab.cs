@@ -384,74 +384,30 @@ public sealed class FindTab
         return [.. ordered];
     }
 
-    // Right-click menu on a result row — quick actions every market plugin offers.
+    // Right-click menu on a result row — the shared item actions plus Find-specific Plan / Craft entries.
     private void DrawRowContextMenu(ProfitableItem item)
     {
-        if (!ImGui.BeginPopupContextItem($"##ctx{item.ItemId}")) return;
-
-        ImGui.TextDisabled(item.Name);
-        ImGui.Separator();
-
-        if (ImGui.MenuItem("Plan — gather & craft"))
+        ItemActions.ContextMenu($"##ctx{item.ItemId}", item.ItemId, item.Name, craftable: true, extra: () =>
         {
-            selected = item;
-            MainWindow.SwitchToGather(item);
-        }
-        if (Plugin.Artisan.IsAvailable && ImGui.MenuItem("Craft 1 with Artisan"))
-        {
-            var q = Plugin.CraftQueue;
-            q.Build(item.ItemId, 1);
-            if (q.Entries.Count > 0 && q.Missing.Count == 0)
+            if (ImGui.MenuItem("Plan — gather & craft"))
             {
-                var n = Plugin.Artisan.CraftAll(q.Entries);
-                if (n > 0) Service.ToastGui.ShowNormal($"Sent {item.Name} to Artisan.");
-                else { MainWindow.SwitchToQueue(); Service.ToastGui.ShowError("Couldn't reach Artisan — opened the Queue tab."); }
+                selected = item;
+                MainWindow.SwitchToGather(item);
             }
-            else { MainWindow.SwitchToQueue(); Service.ToastGui.ShowNormal("Missing materials — see the Queue tab."); }
-        }
-        if (ImGui.MenuItem("Link in chat"))
-            LinkItemInChat(item);
-        if (ImGui.MenuItem("Copy name"))
-            ImGui.SetClipboardText(item.Name);
-
-        // Add to a crafting list (or start a new one).
-        if (ImGui.BeginMenu("Add to list"))
-        {
-            var lists = Plugin.Config.CraftLists;
-            for (var i = 0; i < lists.Count; i++)
-                if (ImGui.MenuItem($"{lists[i].Name}##addlist{i}"))
-                    ListsTab.AddItemToList(i, item.ItemId, item.Name);
-
-            if (lists.Count > 0) ImGui.Separator();
-            if (ImGui.MenuItem("+ New list"))
+            if (Plugin.Artisan.IsAvailable && ImGui.MenuItem("Craft 1 with Artisan"))
             {
-                lists.Add(new CraftList { Name = $"List {lists.Count + 1}" });
-                ListsTab.AddItemToList(lists.Count - 1, item.ItemId, item.Name);
+                var q = Plugin.CraftQueue;
+                q.Build(item.ItemId, 1);
+                if (q.Entries.Count > 0 && q.Missing.Count == 0)
+                {
+                    var n = Plugin.Artisan.CraftAll(q.Entries);
+                    if (n > 0) Service.ToastGui.ShowNormal($"Sent {item.Name} to Artisan.");
+                    else { MainWindow.SwitchToQueue(); Service.ToastGui.ShowError("Couldn't reach Artisan — opened the Queue tab."); }
+                }
+                else { MainWindow.SwitchToQueue(); Service.ToastGui.ShowNormal("Missing materials — see the Queue tab."); }
             }
-            ImGui.EndMenu();
-        }
-
-        ImGui.Separator();
-        if (ImGui.MenuItem("Open on Universalis"))
-            Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{item.ItemId}");
-        if (ImGui.MenuItem("Open on Garland Tools"))
-            Dalamud.Utility.Util.OpenLink($"https://garlandtools.org/db/#item/{item.ItemId}");
-
-        ImGui.EndPopup();
-    }
-
-    // Print a clickable game item link to chat (hover/click shows the in-game tooltip).
-    private static void LinkItemInChat(ProfitableItem item)
-    {
-        try
-        {
-            var seString = new SeString(
-                new ItemPayload(item.ItemId, false),
-                new TextPayload($"{(char)SeIconChar.LinkMarker}{item.Name}"),
-                RawPayload.LinkTerminator);
-            Service.ChatGui.Print(seString);
-        }
-        catch (Exception ex) { Service.Log.Warning(ex, "Failed to link item in chat"); }
+            ImGui.Separator();
+        });
     }
 
     // Draw the game item icon at text-line height. Falls back to blank space so

@@ -151,31 +151,10 @@ public sealed class SellTab
     }
 
     private void DrawContextMenu(SellableItem r)
-    {
-        if (!ImGui.BeginPopupContextItem($"##sellctx{r.ItemId}")) return;
-        ImGui.TextDisabled(r.Name);
-        ImGui.Separator();
-        if (ImGui.MenuItem("Link in chat")) LinkItemInChat(r.ItemId, r.Name);
-        if (ImGui.MenuItem("Copy name")) ImGui.SetClipboardText(r.Name);
-        if (ImGui.MenuItem("Copy list price")) ImGui.SetClipboardText(r.SuggestedPrice.ToString());
-        ImGui.Separator();
-        if (ImGui.MenuItem("Open on Universalis"))
-            Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{r.ItemId}");
-        ImGui.EndPopup();
-    }
-
-    private static void LinkItemInChat(uint itemId, string name)
-    {
-        try
+        => ItemActions.ContextMenu($"##sellctx{r.ItemId}", r.ItemId, r.Name, ItemActions.HasRecipe(r.ItemId), extra: () =>
         {
-            var seString = new SeString(
-                new ItemPayload(itemId, false),
-                new TextPayload($"{(char)SeIconChar.LinkMarker}{name}"),
-                RawPayload.LinkTerminator);
-            Service.ChatGui.Print(seString);
-        }
-        catch (Exception ex) { Service.Log.Warning(ex, "Failed to link item in chat"); }
-    }
+            if (ImGui.MenuItem("Copy list price")) ImGui.SetClipboardText(r.SuggestedPrice.ToString());
+        });
 
     private static void DrawIcon(ushort iconId)
     {

@@ -478,6 +478,18 @@ public sealed class QueueTab
             ImGui.SameLine();
             if (vend is { } v && (v.IsCurrentCity || !boardCheaper))
             {
+                // Teleport straight to the vendor's city when it isn't where you're standing.
+                if (!v.IsCurrentCity)
+                {
+                    var aeth = VendorSourcing.CityAetheryte(v.TerritoryId);
+                    if (aeth != 0)
+                    {
+                        if (ImGui.SmallButton($"TP##tp{m.ItemId}")) AetheryteData.Teleport(aeth);
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Teleport to {v.City}.");
+                        ImGui.SameLine();
+                    }
+                }
+
                 var label = v.IsCurrentCity ? $"Buy NPC here · {v.Price:N0}g" : $"Buy NPC · {v.City} · {v.Price:N0}g";
                 if (ImGui.SmallButton($"{label}##src{m.ItemId}"))
                 {
@@ -490,19 +502,21 @@ public sealed class QueueTab
                               : v.IsUnlocked == true ? "a city you've unlocked"
                               : v.IsUnlocked == false ? "a city you haven't unlocked yet"
                               : "unlocked status unknown";
-                    var cmp = board is { } bb ? $"\nMarket board cheapest: {bb.World} @ {bb.Price:N0}g."
+                    var cmp = board is { } bb ? $"\nMarket board cheapest: {bb.World} @ {bb.Price:N0}g ({bb.Available} up)."
                             : fetching ? "\n(checking the market board…)" : "";
-                    ImGui.SetTooltip($"{v.Npc} in {v.City} ({where}) — {v.Price:N0}g each " +
+                    ImGui.SetTooltip($"NPC is cheapest here — {v.Npc} in {v.City} ({where}) — {v.Price:N0}g each " +
                                      $"({v.Price * m.Quantity:N0}g for {m.Quantity}).{cmp}\nClick to flag the vendor on your map.");
                 }
             }
             else if (board is { } bs)
             {
-                if (ImGui.SmallButton($"Buy MB · {bs.World} · {bs.Price:N0}g##src{m.ItemId}"))
-                    Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{m.ItemId}");
+                if (ImGui.SmallButton($"Buy MB · {bs.World} · {bs.Price:N0}g{(bs.Available > 0 ? $" · {bs.Available} up" : "")}##src{m.ItemId}"))
+                    ItemActions.SearchMarketBoard(m.ItemId);
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"Cheaper on the market board: {bs.World} @ {bs.Price:N0}g " +
-                                     (vend is { } vp ? $"(vs NPC {vp.Price:N0}g in {vp.City}). " : "") + "Click to open on Universalis.");
+                    ImGui.SetTooltip($"MB is cheaper: {bs.World} @ {bs.Price:N0}g" +
+                                     (bs.Available > 0 ? $", ~{bs.Available} near that price" : "") +
+                                     (vend is { } vp ? $" (vs NPC {vp.Price:N0}g in {vp.City})" : "") +
+                                     $".\nNeed {m.Quantity}. Opens the in-game Market Board (or Universalis if you're not at one).");
             }
             else
             {
@@ -518,16 +532,18 @@ public sealed class QueueTab
             ImGui.SameLine();
             if (board is { } bs)
             {
-                if (ImGui.SmallButton($"Buy MB · {bs.World} · {bs.Price:N0}g##src{m.ItemId}"))
-                    Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{m.ItemId}");
+                if (ImGui.SmallButton($"Buy MB · {bs.World} · {bs.Price:N0}g{(bs.Available > 0 ? $" · {bs.Available} up" : "")}##src{m.ItemId}"))
+                    ItemActions.SearchMarketBoard(m.ItemId);
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"Cheapest on your datacenter: {bs.World} @ {bs.Price:N0}g each ({bs.Price * m.Quantity:N0}g for {m.Quantity}).\nClick to open on Universalis.");
+                    ImGui.SetTooltip($"Cheapest on your datacenter: {bs.World} @ {bs.Price:N0}g each" +
+                                     (bs.Available > 0 ? $", ~{bs.Available} near that price" : "") +
+                                     $" ({bs.Price * m.Quantity:N0}g for {m.Quantity}).\nOpens the in-game Market Board (or Universalis if you're not at one).");
             }
             else
             {
                 if (ImGui.SmallButton($"Market board##src{m.ItemId}"))
-                    Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{m.ItemId}");
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip(fetching ? "Finding the cheapest world…" : "Buy from the market board — open on Universalis.");
+                    ItemActions.SearchMarketBoard(m.ItemId);
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(fetching ? "Finding the cheapest world…" : "Open this item in the in-game Market Board (or Universalis if you're not at one).");
             }
         }
 

@@ -114,6 +114,7 @@ public sealed class FlipTab
                 DrawIcon(r.IconId);
                 ImGui.SameLine();
                 ImGui.TextUnformatted(r.Hq ? $"{r.Name}  HQ" : r.Name);
+                ItemActions.ContextMenu($"##flipctx{r.ItemId}", r.ItemId, r.Name, ItemActions.HasRecipe(r.ItemId));
 
                 ImGui.TableSetColumnIndex(1);
                 ImGui.Text($"{r.BuyPrice:N0}");

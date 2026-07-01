@@ -25,6 +25,15 @@ public sealed class FurnitureTab
     private int  sortCol = 6;    // 0 name 1 cat 2 going 3 sold 4 sellers 5 net 6 rev/wk
     private static readonly string[] Scopes = ["All", "Interior", "Exterior"];
 
+    // Extended filters (the "Filters" panel).
+    private string nameFilter = "";
+    private string categoryFilter = "";   // "" = all categories
+    private int    jobFilter = -1;         // -1 = all, 0..7 = CRP..CUL
+    private int    minPrice, maxPrice;     // going-price band (0 = no limit)
+    private int    minNet;                 // min net/craft
+    private int    maxSellers;             // hide over-saturated (0 = no limit)
+    private bool   risingOnly;             // only rising-trend items
+
     public void Draw()
     {
         var engine = Plugin.FurnitureEngine;
@@ -104,6 +113,8 @@ public sealed class FurnitureTab
         ImGui.SameLine(); ImGui.TextDisabled("·");
         ImGui.SameLine(); ImGui.TextColored(new Vector4(1f, 0.45f, 0.35f, 1f), "many = price war");
         ImGui.SameLine(); ImGui.TextDisabled("· 🖌 = dyeable");
+
+        DrawExtraFilters(engine.Results);
 
         var rows = Filter(engine.Results);
         if (rows.Count == 0)
@@ -211,7 +222,87 @@ public sealed class FurnitureTab
             q = q.Where(r => !r.Craftable || r.JobId < 0
                 || r.RecipeLevel <= lv.GetValueOrDefault(r.JobId, 99) + buffer);
         }
+
+        // Extended "Filters" panel.
+        if (!string.IsNullOrWhiteSpace(nameFilter))
+            q = q.Where(r => r.Name.Contains(nameFilter, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrEmpty(categoryFilter))
+            q = q.Where(r => r.Category == categoryFilter);
+        if (jobFilter >= 0)  q = q.Where(r => r.JobId == jobFilter);
+        if (minPrice > 0)    q = q.Where(r => r.GoingPrice >= minPrice);
+        if (maxPrice > 0)    q = q.Where(r => r.GoingPrice <= maxPrice);
+        if (minNet != 0)     q = q.Where(r => r.NetPerCraft >= minNet);
+        if (maxSellers > 0)  q = q.Where(r => r.Sellers > 0 && r.Sellers <= maxSellers);
+        if (risingOnly)      q = q.Where(r => r.TrendDir > 0);
         return q.ToList();
+    }
+
+    // The "Filters" panel: name search (always shown) + a collapsible with the finer filters.
+    private void DrawExtraFilters(IReadOnlyList<FurnitureItem> all)
+    {
+        ImGui.SetNextItemWidth(200);
+        ImGui.InputTextWithHint("##furnname", "Search name…", ref nameFilter, 64);
+        ImGui.SameLine();
+        var active = ActiveFilterCount();
+        if (!ImGui.CollapsingHeader(active > 0 ? $"Filters ({active})##furnfilters" : "Filters##furnfilters"))
+            return;
+
+        ImGui.Indent();
+        ImGui.SetNextItemWidth(170);
+        if (ImGui.BeginCombo("Category##furncat", string.IsNullOrEmpty(categoryFilter) ? "All categories" : categoryFilter))
+        {
+            if (ImGui.Selectable("All categories", categoryFilter == "")) categoryFilter = "";
+            foreach (var c in all.Select(r => r.Category).Where(c => !string.IsNullOrEmpty(c))
+                                  .Distinct().OrderBy(c => c, StringComparer.Ordinal))
+                if (ImGui.Selectable(c, c == categoryFilter)) categoryFilter = c;
+            ImGui.EndCombo();
+        }
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(120);
+        if (ImGui.BeginCombo("Job##furnjob", jobFilter < 0 ? "All jobs" : JobShort[jobFilter]))
+        {
+            if (ImGui.Selectable("All jobs", jobFilter < 0)) jobFilter = -1;
+            for (var j = 0; j < 8; j++)
+                if (ImGui.Selectable(JobShort[j], j == jobFilter)) jobFilter = j;
+            ImGui.EndCombo();
+        }
+
+        ImGui.SetNextItemWidth(130); ImGui.InputInt("Min price##furnminp", ref minPrice, 100, 1000); if (minPrice < 0) minPrice = 0;
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(130); ImGui.InputInt("Max price##furnmaxp", ref maxPrice, 100, 1000); if (maxPrice < 0) maxPrice = 0;
+
+        ImGui.SetNextItemWidth(130); ImGui.InputInt("Min net##furnminnet", ref minNet, 100, 1000);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(130); ImGui.InputInt("Max sellers##furnmaxsell", ref maxSellers, 1, 5); if (maxSellers < 0) maxSellers = 0;
+        ImGui.SameLine();
+        ImGui.Checkbox("Rising only##furnrise", ref risingOnly);
+
+        if (active > 0)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Reset filters")) ResetFilters();
+        }
+        ImGui.Unindent();
+    }
+
+    private int ActiveFilterCount()
+    {
+        var n = 0;
+        if (!string.IsNullOrWhiteSpace(nameFilter)) n++;
+        if (!string.IsNullOrEmpty(categoryFilter))  n++;
+        if (jobFilter >= 0) n++;
+        if (minPrice > 0)   n++;
+        if (maxPrice > 0)   n++;
+        if (minNet != 0)    n++;
+        if (maxSellers > 0) n++;
+        if (risingOnly)     n++;
+        return n;
+    }
+
+    private void ResetFilters()
+    {
+        nameFilter = ""; categoryFilter = ""; jobFilter = -1;
+        minPrice = maxPrice = minNet = maxSellers = 0; risingOnly = false;
     }
 
     // CraftType 0..7 → the player's current level in that crafter class.
@@ -238,40 +329,7 @@ public sealed class FurnitureTab
     };
 
     private void DrawContextMenu(FurnitureItem r)
-    {
-        if (!ImGui.BeginPopupContextItem($"##furnctx{r.ItemId}")) return;
-        ImGui.TextDisabled(r.Name);
-        ImGui.Separator();
-        if (r.Craftable && ImGui.BeginMenu("Add to list"))
-        {
-            var lists = Plugin.Config.CraftLists;
-            for (var i = 0; i < lists.Count; i++)
-                if (ImGui.MenuItem($"{lists[i].Name}##fl{i}")) ListsTab.AddItemToList(i, r.ItemId, r.Name);
-            if (lists.Count > 0) ImGui.Separator();
-            if (ImGui.MenuItem("+ New list"))
-            {
-                lists.Add(new CraftList { Name = $"List {lists.Count + 1}" });
-                ListsTab.AddItemToList(lists.Count - 1, r.ItemId, r.Name);
-            }
-            ImGui.EndMenu();
-        }
-        if (ImGui.MenuItem("Link in chat")) LinkItemInChat(r.ItemId, r.Name);
-        if (ImGui.MenuItem("Copy name")) ImGui.SetClipboardText(r.Name);
-        if (ImGui.MenuItem("Open on Universalis"))
-            Dalamud.Utility.Util.OpenLink($"https://universalis.app/market/{r.ItemId}");
-        ImGui.EndPopup();
-    }
-
-    private static void LinkItemInChat(uint itemId, string name)
-    {
-        try
-        {
-            var s = new SeString(new ItemPayload(itemId, false),
-                new TextPayload($"{(char)SeIconChar.LinkMarker}{name}"), RawPayload.LinkTerminator);
-            Service.ChatGui.Print(s);
-        }
-        catch (Exception ex) { Service.Log.Warning(ex, "link item failed"); }
-    }
+        => ItemActions.ContextMenu($"##furnctx{r.ItemId}", r.ItemId, r.Name, r.Craftable);
 
     private static void DrawIcon(ushort iconId)
     {

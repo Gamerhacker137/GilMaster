@@ -422,6 +422,7 @@ public sealed class GatherTab
 
                 ImGui.TableSetColumnIndex(0);
                 ImGui.TextUnformatted(r.Name);
+                ItemActions.ContextMenu($"##gpctx{r.ItemId}", r.ItemId, r.Name, ItemActions.HasRecipe(r.ItemId));
                 if (r.TrendDir != 0)
                 {
                     ImGui.SameLine();

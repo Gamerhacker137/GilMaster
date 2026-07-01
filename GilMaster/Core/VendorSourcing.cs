@@ -12,8 +12,9 @@ namespace GilMaster.Core;
 public readonly record struct VendorSource(
     string Npc, string City, uint TerritoryId, uint Price, bool IsCurrentCity, bool? IsUnlocked);
 
-/// <summary>The cheapest world to buy an item on the market board, and its unit price.</summary>
-public readonly record struct BoardSource(string World, long Price);
+/// <summary>The cheapest world to buy an item on the market board, its unit price, and roughly how
+/// many units are for sale near that price on that world.</summary>
+public readonly record struct BoardSource(string World, long Price, long Available);
 
 /// <summary>
 /// "Where should I actually buy this?" — picks the best NPC vendor (current city &gt; an unlocked
@@ -44,6 +45,9 @@ public static class VendorSourcing
         _terrToAeth ??= BuildTerrToAeth();
         return _terrToAeth.TryGetValue(territoryId, out var a) ? a : 0;
     }
+
+    /// <summary>The aetheryte to teleport to to reach a vendor in this territory (0 if unknown).</summary>
+    public static uint CityAetheryte(uint territoryId) => GatingAetheryte(territoryId);
 
     // null = couldn't determine (not logged in / unknown territory).
     private static unsafe bool? IsTerritoryUnlocked(uint territoryId)
@@ -86,17 +90,20 @@ public static class VendorSourcing
         return Make(all[0]);
     }
 
-    /// <summary>Cheapest world to buy this item (NQ) on the datacenter, and its price.</summary>
+    /// <summary>Cheapest world to buy this item (NQ) on the datacenter, its price, and roughly how
+    /// many units are for sale near that floor on that world (within 5%, same pattern as FlipEngine).</summary>
     public static async Task<BoardSource?> CheapestWorldOnDc(uint itemId, string dc, CancellationToken ct = default)
     {
         var data = await Plugin.Universalis.GetItemAsync(itemId, dc, ct).ConfigureAwait(false);
         if (data is null || !data.HasData) return null;
-        var cheapest = data.Listings
-            .Where(l => l.PricePerUnit > 0 && !l.Hq)
-            .OrderBy(l => l.PricePerUnit)
-            .FirstOrDefault();
-        return cheapest is { PricePerUnit: > 0 }
-            ? new BoardSource(cheapest.WorldName ?? "?", cheapest.PricePerUnit)
-            : null;
+        var nq = data.Listings.Where(l => l.PricePerUnit > 0 && !l.Hq).ToList();
+        var cheapest = nq.OrderBy(l => l.PricePerUnit).FirstOrDefault();
+        if (cheapest is not { PricePerUnit: > 0 }) return null;
+
+        var cap = cheapest.PricePerUnit * 1.05;
+        long available = nq
+            .Where(l => string.Equals(l.WorldName, cheapest.WorldName, StringComparison.OrdinalIgnoreCase) && l.PricePerUnit <= cap)
+            .Sum(l => l.Quantity);
+        return new BoardSource(cheapest.WorldName ?? "?", cheapest.PricePerUnit, available);
     }
 }
